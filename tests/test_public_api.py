@@ -9,9 +9,17 @@ import pytest
 
 import msst
 import msst.training as training_module
-from msst import OptionalDependencyError, OutputFormatError, Separator
+import msst.validation as validation_module
+from msst import (
+    OptionalDependencyError,
+    OutputFormatError,
+    Separator,
+    ValidationConfig,
+    ValidationResult,
+)
 from msst.inference import InferenceConfig, inference, proc_folder
 from msst.training import train
+from msst.validation import valid
 
 
 def _install_fake_inference(monkeypatch, *, load_error=None):
@@ -72,10 +80,16 @@ def test_package_has_release_version():
     assert "Separator" in msst.__all__
     assert callable(msst.inference)
     assert callable(msst.train)
+    assert callable(msst.valid)
+    assert "ValidationResult" in msst.__all__
 
 
 def test_programmatic_parsers_accept_namespace_and_reject_unknown_keys():
-    from msst.utils.settings import parse_args_inference, parse_args_train
+    from msst.utils.settings import (
+        parse_args_inference,
+        parse_args_train,
+        parse_args_valid,
+    )
 
     inference_args = parse_args_inference(
         argparse.Namespace(config_path="model.yaml", force_cpu=True)
@@ -85,6 +99,12 @@ def test_programmatic_parsers_accept_namespace_and_reject_unknown_keys():
 
     train_args = parse_args_train(argparse.Namespace(model_type="bs_roformer"))
     assert train_args.model_type == "bs_roformer"
+
+    valid_args = parse_args_valid(
+        argparse.Namespace(force_cpu=True, verbose=True)
+    )
+    assert valid_args.force_cpu is True
+    assert valid_args.verbose is True
 
     with pytest.raises(TypeError, match="Unknown argument.*typo"):
         parse_args_inference({"typo": 1})
@@ -325,7 +345,7 @@ def test_training_exposes_conventional_keyword_api(monkeypatch, tmp_path):
         num_workers=4,
     )
 
-    assert result == "trained"
+    assert result is None
     assert calls == [
         {
             "config_path": str(tmp_path / "model.yaml"),
@@ -376,3 +396,137 @@ def test_training_rejects_invalid_public_arguments(kwargs, message):
     values.update(kwargs)
     with pytest.raises((TypeError, ValueError), match=message):
         train(**values)
+
+
+def test_validation_exposes_typed_keyword_api(monkeypatch, tmp_path):
+    calls = []
+    legacy_result = (
+        {"sdr": 8.5},
+        {"sdr": {"vocals": [8.0, np.float32(9.0)]}},
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "msst._validation",
+        SimpleNamespace(
+            check_validation=lambda args: calls.append(args) or legacy_result
+        ),
+    )
+
+    result = valid(
+        config_path=tmp_path / "model.yaml",
+        checkpoint_path=tmp_path / "model.ckpt",
+        valid_path=[tmp_path / "valid-a", tmp_path / "valid-b"],
+        model_type="bs_roformer",
+        device_ids=(0, 1),
+        metrics=("sdr", "k_sdr", "sdr"),
+        output_folder=tmp_path / "output",
+        extension=".flac",
+        force_cpu=True,
+        verbose=True,
+    )
+
+    assert result == ValidationResult(
+        averages={"sdr": 8.5},
+        per_track={"sdr": {"vocals": [8.0, 9.0]}},
+    )
+    assert calls == [
+        {
+            "config_path": str(tmp_path / "model.yaml"),
+            "start_check_point": str(tmp_path / "model.ckpt"),
+            "valid_path": [
+                str(tmp_path / "valid-a"),
+                str(tmp_path / "valid-b"),
+            ],
+            "model_type": "bs_roformer",
+            "device_ids": [0, 1],
+            "force_cpu": True,
+            "metrics": ["sdr", "k_sdr"],
+            "store_dir": str(tmp_path / "output"),
+            "extension": "flac",
+            "use_tta": False,
+            "draw_spectro": 0,
+            "lora_checkpoint_peft": "",
+            "lora_checkpoint_loralib": "",
+            "verbose": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"valid_path": []}, "valid_path"),
+        ({"device_ids": []}, "device_ids"),
+        ({"device_ids": [-1]}, "negative"),
+        ({"device_ids": [0, 0]}, "unique"),
+        ({"metrics": []}, "metrics"),
+        ({"metrics": ["not-a-metric"]}, "Unsupported"),
+        ({"draw_spectro": -1}, "draw_spectro"),
+        ({"extension": ""}, "extension"),
+    ],
+)
+def test_validation_rejects_invalid_public_arguments(kwargs, message):
+    values = {
+        "config_path": "model.yaml",
+        "checkpoint_path": "model.ckpt",
+        "valid_path": "validation",
+    }
+    values.update(kwargs)
+    with pytest.raises((TypeError, ValueError), match=message):
+        valid(**values)
+
+
+def test_validation_config_translates_defaults():
+    config = ValidationConfig("model.yaml", "model.ckpt", "validation")
+
+    assert config.to_legacy_args() == {
+        "config_path": "model.yaml",
+        "start_check_point": "model.ckpt",
+        "valid_path": ["validation"],
+        "model_type": "mdx23c",
+        "device_ids": [0],
+        "force_cpu": False,
+        "metrics": ["sdr"],
+        "store_dir": "",
+        "extension": "wav",
+        "use_tta": False,
+        "draw_spectro": 0,
+        "lora_checkpoint_peft": "",
+        "lora_checkpoint_loralib": "",
+        "verbose": False,
+    }
+
+
+def test_validation_missing_dependency_has_install_hint(monkeypatch):
+    error = ModuleNotFoundError("No module named 'auraloss'", name="auraloss")
+
+    def fail_import(name, package=None):
+        raise error
+
+    monkeypatch.setattr(validation_module, "import_module", fail_import)
+
+    with pytest.raises(OptionalDependencyError) as caught:
+        valid(
+            model_type="bs_roformer",
+            config_path="model.yaml",
+            checkpoint_path="model.ckpt",
+            valid_path="validation",
+        )
+
+    assert caught.value.dependency == "auraloss"
+    assert 'pip install "msst[validation,bs-roformer]"' in str(caught.value)
+
+
+def test_validation_rejects_invalid_runtime_result(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "msst._validation",
+        SimpleNamespace(check_validation=lambda args: None),
+    )
+
+    with pytest.raises(RuntimeError, match="invalid result"):
+        valid(
+            config_path="model.yaml",
+            checkpoint_path="model.ckpt",
+            valid_path="validation",
+        )

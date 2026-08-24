@@ -202,6 +202,7 @@ def parse_args_valid(dict_args: Union[Dict, None]) -> argparse.Namespace:
                         help="If --store_dir is set then code will generate spectrograms for resulted stems as well."
                              " Value defines for how many seconds os track spectrogram will be generated.")
     parser.add_argument("--device_ids", nargs='+', type=int, default=[0], help='List of gpu ids')
+    parser.add_argument("--force_cpu", action='store_true', help='Force validation to run on CPU')
     parser.add_argument("--num_workers", type=int, default=0, help="Dataloader num_workers")
     parser.add_argument("--pin_memory", action='store_true', help="Dataloader pin_memory")
     parser.add_argument("--extension", type=str, default='wav', help="Choose extension for validation")
@@ -214,6 +215,7 @@ def parse_args_valid(dict_args: Union[Dict, None]) -> argparse.Namespace:
                         help='List of metrics to use.')
     parser.add_argument("--lora_checkpoint_peft", type=str, default='', help="Initial checkpoint to LoRA weights")
     parser.add_argument("--lora_checkpoint_loralib", type=str, default='', help="Initial checkpoint to LoRA weights")
+    parser.add_argument("--verbose", action='store_true', help='Print validation paths and detailed metrics')
 
 
     if dict_args is not None:

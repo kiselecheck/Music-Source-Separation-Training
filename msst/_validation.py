@@ -16,6 +16,8 @@ from ml_collections import ConfigDict
 from typing import Tuple, Dict, List, Union, Any, Optional
 import torch.distributed as dist
 from pathlib import Path
+from collections.abc import Mapping
+from msst._inference import resolve_device, validate_checkpoint_metadata
 from msst.utils.settings import get_model_from_config, logging, write_results_in_file, parse_args_valid
 from msst.utils.audio_utils import normalize_audio, denormalize_audio, read_audio_transposed, \
     draw_2_mel_spectrogram
@@ -870,18 +872,37 @@ def valid_multi_gpu(
     return metric_avg, all_metrics
 
 
-def check_validation(dict_args):
+def check_validation(
+    dict_args: argparse.Namespace | Mapping[str, Any] | None = None,
+) -> Tuple[Dict[str, float], Dict[str, Dict[str, List[float]]]]:
+    """Load a checkpoint and evaluate it with the historical validation engine.
+
+    This is the compatibility boundary used by ``valid.py``, ``msst-valid``,
+    and the typed :func:`msst.valid` facade. Programmatic callers should prefer
+    :func:`msst.valid`, which returns a named ``ValidationResult``.
+    """
+
     args = parse_args_valid(dict_args)
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = not args.force_cpu
     try:
         torch.multiprocessing.set_start_method('spawn')
-    except Exception as e:
+    except RuntimeError:
         pass
-    model, config = get_model_from_config(args.model_type, args.config_path)
+    model, config = get_model_from_config(
+        args.model_type,
+        args.config_path,
+        pretrained=not bool(args.start_check_point),
+    )
     if 'model_type' in config.training:
         args.model_type = config.training.model_type
     if args.start_check_point:
         checkpoint = torch.load(args.start_check_point, weights_only=False, map_location='cpu')
+        validate_checkpoint_metadata(
+            checkpoint,
+            checkpoint_path=Path(args.start_check_point),
+            model_type=args.model_type,
+            config=config,
+        )
         load_start_checkpoint(args, model, checkpoint, type_='valid')
     if args.lora_checkpoint_peft:
         from peft import PeftModel
@@ -889,17 +910,15 @@ def check_validation(dict_args):
         model = model.merge_and_unload()
     print(f"Instruments: {config.training.instruments}")
 
+    device = resolve_device(args)
     device_ids = args.device_ids
-    if torch.cuda.is_available():
-        device = torch.device(f'cuda:{device_ids[0]}')
-    else:
-        device = 'cpu'
+    if device.type == 'cpu' and not args.force_cpu:
         print('CUDA is not available. Run validation on CPU. It will be very slow...')
 
-    if torch.cuda.is_available() and len(device_ids) > 1:
-        metrics = valid_multi_gpu(model, args, config, device_ids, verbose=False)
+    if device.type == 'cuda' and len(device_ids) > 1:
+        metrics = valid_multi_gpu(model, args, config, device_ids, verbose=args.verbose)
     else:
-        metrics = valid(model, args, config, device, verbose=False)
+        metrics = valid(model, args, config, device, verbose=args.verbose)
 
     del model
     torch.cuda.empty_cache()

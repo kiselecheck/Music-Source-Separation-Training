@@ -23,6 +23,13 @@ from .inference import (
     inference,
 )
 from .training import train
+from .validation import (
+    SUPPORTED_VALIDATION_METRICS,
+    ValidationConfig,
+    ValidationMetric,
+    ValidationResult,
+    valid,
+)
 
 
 __all__ = [
@@ -39,7 +46,12 @@ __all__ = [
     "OutputFormatError",
     "Separator",
     "SUPPORTED_AUDIO_EXTENSIONS",
+    "SUPPORTED_VALIDATION_METRICS",
+    "ValidationConfig",
+    "ValidationMetric",
+    "ValidationResult",
     "inference",
     "train",
+    "valid",
     "__version__",
 ]

@@ -2,7 +2,7 @@
 name = "msst"
 description = "Training and inference code for music source separation experiments."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Roman Solovyev (ZFTurbo)" }]
@@ -58,7 +58,7 @@ train = [
   "torch-log-wmse>=0.3.1",
   "wandb"
 ]
-test = ["pytest>=8"]
+test = ["mypy>=1.11", "pytest>=8"]
 validation = ["auraloss", "torch-l1-snr>=0.1.2", "torch-log-wmse>=0.3.1"]
 # models
 apollo = ["pytorch-lightning"]
@@ -136,6 +136,7 @@ torchseg = ["torchseg", "timm"]
 [project.scripts]
 msst-inference = "msst.cli:inference"
 msst-train = "msst.cli:train"
+msst-valid = "msst.cli:valid"
 
 [build-system]
 requires = ["setuptools>=80"]
@@ -153,4 +154,17 @@ include = ["msst*"]
 namespaces = true
 
 [tool.setuptools.package-data]
+"msst" = ["py.typed"]
 "msst.models.bandit.core.data.musdb" = ["validation.yaml"]
+
+[tool.mypy]
+check_untyped_defs = true
+files = [
+  "msst/__init__.py",
+  "msst/inference.py",
+  "msst/training.py",
+  "msst/validation.py",
+]
+follow_imports = "skip"
+ignore_missing_imports = true
+python_version = "3.10"

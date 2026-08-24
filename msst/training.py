@@ -11,6 +11,7 @@ from typing import Any
 from .errors import optional_dependency_error
 
 PathValue = str | PathLike[str]
+TrainingOptionValue = bool | int | float | str | Sequence[str] | None
 
 
 def _paths(value: PathValue | Sequence[PathValue] | None) -> list[str] | None:
@@ -30,12 +31,28 @@ def train(
     model_type: str = "mdx23c",
     checkpoint_path: PathValue | None = None,
     device_ids: int | Sequence[int] = (0,),
-    **options: Any,
-) -> Any:
+    **options: TrainingOptionValue,
+) -> None:
     """Train an MSST model using conventional keyword arguments.
 
-    Less common training flags can be supplied through ``options`` using the
-    same names as the command-line arguments.
+    Args:
+        config_path: YAML configuration used to construct and train the model.
+        results_path: Directory for checkpoints, history, and model metadata.
+        data_path: One training dataset root or a sequence of roots.
+        valid_path: Optional validation dataset root or roots.
+        model_type: Model family key, for example ``"bs_roformer"``.
+        checkpoint_path: Optional checkpoint used to initialize the model.
+        device_ids: CUDA index or indices used for training.
+        **options: Less common training flags using the same names and value
+            types as ``msst-train --help``.
+
+    Returns:
+        None. Training artifacts are written below ``results_path``.
+
+    Raises:
+        TypeError: An option name or value type is invalid.
+        ValueError: A required path or device list is empty or invalid.
+        MSSTError: Model construction, checkpoint loading, or training fails.
     """
 
     if "start_check_point" in options and checkpoint_path is not None:
@@ -80,14 +97,14 @@ def train(
     }
     if checkpoint_path is not None:
         args["start_check_point"] = str(checkpoint_path)
-    return train_model(args)
+    train_model(args)
 
 
 def train_model(
     args: argparse.Namespace | Mapping[str, Any] | None = None,
     /,
     **kwargs: Any,
-) -> Any:
+) -> None:
     """Compatibility entry point matching the existing ``train_model`` API."""
 
     if args is None:
@@ -106,7 +123,7 @@ def train_model(
 
     try:
         legacy_train_model = import_module("._training", __package__).train_model
-        return legacy_train_model(payload)
+        legacy_train_model(payload)
     except ModuleNotFoundError as error:
         model_type = "mdx23c"
         if isinstance(payload, argparse.Namespace):
@@ -121,4 +138,4 @@ def train_model(
         ) from error
 
 
-__all__ = ["train", "train_model"]
+__all__ = ["TrainingOptionValue", "train", "train_model"]

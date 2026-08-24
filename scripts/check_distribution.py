@@ -16,6 +16,8 @@ REQUIRED_FILES = {
     "msst/_version.py",
     "msst/errors.py",
     "msst/inference.py",
+    "msst/py.typed",
+    "msst/validation.py",
     "msst/models/bs_roformer/bs_roformer.py",
     "msst/training.py",
     "msst/utils/dataset.py",
@@ -70,7 +72,7 @@ def check_wheel(path: Path) -> None:
         if len(entry_points) != 1:
             raise RuntimeError("Wheel must contain exactly one entry_points.txt")
         scripts = archive.read(entry_points[0]).decode("utf-8")
-        for command in ("msst-inference", "msst-train"):
+        for command in ("msst-inference", "msst-train", "msst-valid"):
             if command not in scripts:
                 raise RuntimeError(f"Wheel does not define {command!r}")
 
