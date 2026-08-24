@@ -23,7 +23,7 @@ the pending publisher instead.
 ## Release procedure
 
 1. Update `msst/_version.py`.
-2. Run `python -m pytest -q`.
+2. Run `python -m mypy` and `python -m pytest -q`.
 3. Build locally with `python -m build` and run
    `python -m twine check --strict dist/*`.
 4. Merge the release commit into `main`.
@@ -32,6 +32,12 @@ the pending publisher instead.
 The workflow refuses to publish when the tag and `msst.__version__` differ.
 PyPI does not allow replacing an uploaded version, so a failed or incorrect
 release must be followed by a new version number.
+
+Before tagging, install the wheel into a fresh environment outside the source
+checkout. Confirm that `import msst`, `msst-inference --help`,
+`msst-valid --help`, and `msst-train --help` resolve from that environment, then
+run small inference, validation, and one-step training smoke tests with external
+configs, checkpoints, and audio.
 
 ## Package layout
 

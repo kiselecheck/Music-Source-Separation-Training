@@ -1,10 +1,69 @@
 # Music Source Separation Universal Training Code
 
-Repository for training models for music source separation. Repository is based on [kuielab code](https://github.com/kuielab/sdx23/tree/mdx_AB/my_submission/src) for [SDX23 challenge](https://github.com/kuielab/sdx23/tree/mdx_AB/my_submission/src). The main idea of this repository is to create training code, which is easy to modify for experiments. Brought to you by [MVSep.com](https://mvsep.com).
+[![Python package CI](https://github.com/ZFTurbo/Music-Source-Separation-Training/actions/workflows/ci.yml/badge.svg)](https://github.com/ZFTurbo/Music-Source-Separation-Training/actions/workflows/ci.yml)
+![Python 3.10–3.13](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?logo=python&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
-## Models
+MSST is a PyTorch toolkit for music source separation inference, validation,
+and training. It combines a regular Python package with experiment-friendly
+command-line entry points and a broad collection of separation architectures.
+Brought to you by [MVSep.com](https://mvsep.com).
 
-Model can be chosen with `--model_type` arg.
+[Quick start](#quick-start) · [Public API](docs/python_api.md) ·
+[Model compatibility](docs/compatibility.md) · [Dataset layouts](docs/dataset_types.md) ·
+[Package architecture](docs/package_architecture.md) · [Release process](docs/releasing.md)
+
+> [!IMPORTANT]
+> The wheel contains runtime code only. Model YAML files and checkpoints are
+> independently versioned artifacts and must be supplied by the caller.
+
+## Quick start
+
+Install the CUDA build of PyTorch appropriate for the target GPU first, then
+install MSST with the model and workflow extras you need:
+
+```bash
+pip install "msst[bs_roformer]"                    # inference
+pip install "msst[validation,bs_roformer]"         # validation
+pip install "msst[train,bs_roformer]"              # training
+```
+
+| Goal | Python API | Command |
+| --- | --- | --- |
+| Separate files | `msst.inference(...)` or `msst.Separator(...)` | `msst-inference` |
+| Evaluate a checkpoint | `msst.valid(...)` | `msst-valid` |
+| Train or fine-tune | `msst.train(...)` | `msst-train` |
+
+```python
+import msst
+
+written = msst.inference(
+    model_type="bs_roformer",
+    config_path="models/dereverb-v4.yaml",
+    checkpoint_path="models/dereverb-v4.ckpt",
+    input_folder="audio/input",
+    output_folder="audio/stems",
+    device_ids=0,
+)
+
+scores = msst.valid(
+    model_type="bs_roformer",
+    config_path="models/dereverb-v4.yaml",
+    checkpoint_path="models/dereverb-v4.ckpt",
+    valid_path="datasets/dereverb-test",
+    metrics=("sdr", "k_sdr"),
+    device_ids=0,
+)
+print(scores.averages)
+```
+
+All public functions use keyword arguments and accept `pathlib.Path` as well
+as strings. See the [complete Python API reference](docs/python_api.md) for
+parameter tables, return values, examples, and error behavior.
+
+## Supported models
+
+Choose the model family with `--model_type`.
 
 Available models for training:
 
@@ -52,8 +111,9 @@ python train.py \
     --device_ids 0
 ```
 
-All training parameters are defined in
-[`msst/utils/settings.py`](msst/utils/settings.py).
+Use `msst-train --help` for the CLI contract. The equivalent Python parameters
+and less-common training options are listed in the
+[Python API reference](docs/python_api.md#training).
 
 ### Training with LoRA
 
@@ -62,17 +122,6 @@ Look here: [LoRA training](docs/LoRA.md)
 ## How to: Inference
 
 ### Python package
-
-Install MSST together with the dependencies for the required model family:
-
-```bash
-pip install "msst[bs_roformer]"
-```
-
-On CUDA machines, install the PyTorch wheel appropriate for the GPU and driver
-before installing MSST. For example, the tested V100 setup uses matching
-`torch==2.11.0` and `torchaudio==2.11.0` CUDA 12.6 wheels. MSST does not require
-Triton, Torch-TensorRT, or TorchAO.
 
 For development from a local checkout, use `pip install -e ".[bs_roformer]"`.
 The distribution name and import namespace are both `msst`.
@@ -110,10 +159,6 @@ with Separator(
     separator.separate_folder("input/batch_2", "output/batch_2")
 ```
 
-Training is available through `msst.train(...)`; install the training dependencies
-with `pip install "msst[train,bs_roformer]"`. The existing command-line interface
-also remains available as `msst-inference` and `msst-train`.
-
 Input folders accept WAV, FLAC, MP3, OGG/Opus, AIFF and the other formats listed
 in the [model and audio compatibility guide](docs/compatibility.md). Container
 formats such as M4A, MP4, WebM and WMA need a compatible system decoder and are
@@ -122,7 +167,7 @@ default); invalid codec/subtype combinations fail before inference starts.
 
 The historical dictionary form remains available as
 `from msst.inference import proc_folder`. See the complete
-[Python API and migration guide](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/python_api.md).
+[Python API and migration guide](docs/python_api.md).
 The namespace layout and the process for incorporating future upstream changes
 are documented in the [package architecture guide](docs/package_architecture.md).
 
@@ -137,21 +182,51 @@ python inference.py \
     --store_dir separation_results/
 ```
 
-All inference parameters are defined in
-[`msst/utils/settings.py`](msst/utils/settings.py).
+Use `msst-inference --help` for every CLI option or the
+[Python API reference](docs/python_api.md#one-off-folder-inference) for typed
+keyword parameters.
+
 Convert models to ONNX and TensorRT formats [here](https://github.com/ZFTurbo/MSS_ONNX_TensorRT).
+
+## How to: Validate
+
+Validation evaluates a checkpoint against reference stems and returns both
+aggregate and per-track metrics:
+
+```python
+from msst import valid
+
+result = valid(
+    model_type="bs_roformer",
+    config_path="models/model.yaml",
+    checkpoint_path="models/model.ckpt",
+    valid_path="datasets/test",
+    metrics=("sdr", "k_sdr"),
+    device_ids=0,
+)
+
+print(result.averages)
+print(result.per_track["sdr"])
+```
+
+The corresponding CLI command is `msst-valid`; run `msst-valid --help` for
+all options. Validation dataset layouts are described in
+[Dataset types](docs/dataset_types.md#dataset-for-validation).
 
 ## Useful notes
 
-* All batch sizes in config are adjusted to use with single NVIDIA A6000 48GB. If you have less memory please adjust correspodningly in model config `training.batch_size` and `training.gradient_accumulation_steps`.
-* It's usually always better to start with old weights even if shapes not fully match. Code supports loading weights for not fully same models (but it must have the same architecture). Training will be much faster.
+* Example configs are sized for one NVIDIA A6000 with 48 GB of VRAM. For a
+  smaller GPU, adjust `training.batch_size` and
+  `training.gradient_accumulation_steps` in the model config.
+* Starting from compatible weights can shorten training even when every tensor
+  shape does not match. The architecture itself must remain compatible.
 
 ## Code description
 
 * `configs/config_*.yaml` - configuration files for models
-* `msst/models/*` - model implementations used for training and inference
 * `msst/utils/dataset.py` - datasets which create training samples
-* `msst/inference.py` and `msst/training.py` - stable public Python API
+* `msst/inference.py`, `msst/validation.py`, and `msst/training.py` - stable
+  public Python API
 * `msst/models/` - model implementations
 * `msst/utils/` - datasets and shared training/inference utilities
 * `inference.py`, `train.py`, `valid.py`, and `ensemble.py` - source-checkout compatibility entry points

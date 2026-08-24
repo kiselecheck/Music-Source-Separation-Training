@@ -1,5 +1,12 @@
 # Model and audio compatibility
 
+## Python
+
+MSST supports CPython 3.10, 3.11, 3.12, and 3.13. The package metadata enforces
+`Python >=3.10,<3.14`; CI exercises the oldest and newest supported versions.
+Compatibility also depends on whether the selected model extra publishes
+wheels for the target Python, operating system, and GPU stack.
+
 ## PyTorch and CUDA
 
 MSST supports `torch>=2.0.1,<2.12`. Training and model extras that use

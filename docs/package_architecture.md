@@ -8,11 +8,26 @@ API before one release is built.
 
 ## Source layout
 
+```mermaid
+flowchart LR
+    callers["Python callers<br/>CLI commands<br/>root compatibility scripts"]
+    api["Stable public facades<br/>msst.inference<br/>msst.validation<br/>msst.training"]
+    runtime["Packaged runtime<br/>msst._inference<br/>msst._validation<br/>msst._training"]
+    internals["Implementation<br/>msst.models<br/>msst.utils"]
+    artifacts["External artifacts<br/>YAML configs<br/>checkpoints<br/>datasets"]
+    outputs["Results<br/>stems<br/>metrics<br/>trained checkpoints"]
+
+    callers --> api --> runtime --> internals
+    artifacts --> runtime
+    runtime --> outputs
+```
+
 - `msst/` is the only installed Python namespace and owns all runtime code.
 - `msst/models/` and `msst/utils/` contain model, dataset, configuration, and
   support implementations.
-- `msst.inference` and `msst.training` are stable public facades. Internal
-  implementations use a leading underscore until their APIs are stabilized.
+- `msst.inference`, `msst.validation`, and `msst.training` are stable public
+  facades. Internal implementations use a leading underscore until their APIs
+  are stabilized.
 - Repository-level scripts such as `inference.py` and `train.py` are thin
   compatibility entry points. They are not included in the wheel.
 - Repository-level `models` and `utils` packages are temporary source-checkout
