@@ -52,13 +52,79 @@ python train.py \
     --device_ids 0
 ```
 
-All training parameters are [here](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/utils/settings.py#L20).
+All training parameters are defined in
+[`msst/utils/settings.py`](msst/utils/settings.py).
 
 ### Training with LoRA
 
 Look here: [LoRA training](docs/LoRA.md)
 
 ## How to: Inference
+
+### Python package
+
+Install MSST together with the dependencies for the required model family:
+
+```bash
+pip install "msst[bs_roformer]"
+```
+
+On CUDA machines, install the PyTorch wheel appropriate for the GPU and driver
+before installing MSST. For example, the tested V100 setup uses matching
+`torch==2.11.0` and `torchaudio==2.11.0` CUDA 12.6 wheels. MSST does not require
+Triton, Torch-TensorRT, or TorchAO.
+
+For development from a local checkout, use `pip install -e ".[bs_roformer]"`.
+The distribution name and import namespace are both `msst`.
+
+For a one-off folder job, use regular keyword arguments. The function returns
+the paths it created:
+
+```python
+from msst import inference
+
+written_files = inference(
+    model_type="bs_roformer",
+    config_path="models/bs_6stem_fixed_config.yaml",
+    checkpoint_path="models/bs_6stem_fixed.ckpt",
+    input_folder="input/newaudios",
+    output_folder="input/newaudios_cleaned",
+    device_ids=0,
+)
+```
+
+When processing more than one input, use `Separator` so the model is loaded
+only once:
+
+```python
+from msst import Separator
+
+with Separator(
+    model_type="bs_roformer",
+    config_path="models/bs_6stem_fixed_config.yaml",
+    checkpoint_path="models/bs_6stem_fixed.ckpt",
+    device_ids=0,
+) as separator:
+    stems = separator.separate_file("song.wav")
+    separator.separate_folder("input/batch_1", "output/batch_1")
+    separator.separate_folder("input/batch_2", "output/batch_2")
+```
+
+Training is available through `msst.train(...)`; install the training dependencies
+with `pip install "msst[train,bs_roformer]"`. The existing command-line interface
+also remains available as `msst-inference` and `msst-train`.
+
+Input folders accept WAV, FLAC, MP3, OGG/Opus, AIFF and the other formats listed
+in the [model and audio compatibility guide](docs/compatibility.md). Container
+formats such as M4A, MP4, WebM and WMA need a compatible system decoder and are
+therefore conditional. Output is WAV (`FLOAT` by default) or FLAC (`PCM_24` by
+default); invalid codec/subtype combinations fail before inference starts.
+
+The historical dictionary form remains available as
+`from msst.inference import proc_folder`. See the complete
+[Python API and migration guide](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/python_api.md).
+The namespace layout and the process for incorporating future upstream changes
+are documented in the [package architecture guide](docs/package_architecture.md).
 
 ### Inference example
 
@@ -71,7 +137,8 @@ python inference.py \
     --store_dir separation_results/
 ```
 
-All inference parameters are [here](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/utils/settings.py#L130).
+All inference parameters are defined in
+[`msst/utils/settings.py`](msst/utils/settings.py).
 Convert models to ONNX and TensorRT formats [here](https://github.com/ZFTurbo/MSS_ONNX_TensorRT).
 
 ## Useful notes
@@ -82,15 +149,14 @@ Convert models to ONNX and TensorRT formats [here](https://github.com/ZFTurbo/MS
 ## Code description
 
 * `configs/config_*.yaml` - configuration files for models
-* `models/*` - set of available models for training and inference
-* `dataset.py` - dataset which creates new samples for training
+* `msst/models/*` - model implementations used for training and inference
+* `msst/utils/dataset.py` - datasets which create training samples
+* `msst/inference.py` and `msst/training.py` - stable public Python API
+* `msst/models/` - model implementations
+* `msst/utils/` - datasets and shared training/inference utilities
+* `inference.py`, `train.py`, `valid.py`, and `ensemble.py` - source-checkout compatibility entry points
 * `gui-wx.py` - GUI interface for code
-* `inference.py` - process folder with music files and separate them
-* `train.py` - main training code for single GPU
-* `train_ddp.py` - training code for Multi GPU config. Faster than `train.py`. Use it for 2 or more GPUs.
-* `utils.py` - common functions used by train/valid
-* `valid.py` - validation of model with metrics
-* `ensemble.py` - useful script to ensemble results of different models to make results better (see [docs](docs/ensemble.md)).   
+* `train_ddp.py` - compatibility entry point for multi-GPU training
 
 ## Pre-trained models
 

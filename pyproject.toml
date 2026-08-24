@@ -1,27 +1,35 @@
 [project]
-name = "music-source-separation-training"
+name = "msst"
 description = "Training and inference code for music source separation experiments."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Roman Solovyev (ZFTurbo)" }]
-keywords = []
-classifiers = []
+keywords = ["audio", "deep-learning", "music", "source-separation", "pytorch"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Sound/Audio",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
   "PyYAML",
   "librosa",
   "matplotlib",
   "ml-collections",
-  "numpy>=2.0.0",
+  "numpy>=1.23",
   "omegaconf",
-  "pandas",
-  "requests",
   "soundfile",
-  "torch>=2.0.1",
-  "torchaudio",
-  "tqdm",
-  "wxPython ; platform_python_implementation == 'CPython'"
+  "torch>=2.0.1,<2.12",
+  "tqdm"
 ]
 dynamic = ["version"]
 
@@ -33,22 +41,24 @@ Repository = "https://github.com/ZFTurbo/Music-Source-Separation-Training"
 
 [project.optional-dependencies]
 accelerate = ["accelerate", "huggingface-hub>=0.23.0"]
+gui = ["requests", "wxPython ; platform_python_implementation == 'CPython'"]
 lora-loralib = ["loralib"]
 lora-peft = ["peft"]
 optimizer-8bit = ["bitsandbytes ; platform_system == 'Linux' and platform_machine == 'x86_64'"]
 optimizer-muon = ["pytorch-optimizer"]
 optimizer-prodigy = ["prodigyopt"]
-sageattention = ["sageattention ; platform_system == 'Linux' and platform_machine == 'x86_64'"]
 scheduler = ["transformers"]
 stream = ["keyboard", "pyaudio; python_version < '3.14'"]
 train = [
   "audiomentations",
   "auraloss",
   "pedalboard",
+  "torchaudio>=2.0.1,<2.12",
   "torch-l1-snr>=0.1.2",
   "torch-log-wmse>=0.3.1",
   "wandb"
 ]
+test = ["pytest>=8"]
 validation = ["auraloss", "torch-l1-snr>=0.1.2", "torch-log-wmse>=0.3.1"]
 # models
 apollo = ["pytorch-lightning"]
@@ -60,9 +70,10 @@ bandit = [
   "pytorch-lightning",
   "spafe",
   "torch-audiomentations",
+  "torchaudio>=2.0.1,<2.12",
   "torchmetrics"
 ]
-bandit_v2 = ["pytorch-lightning"]
+bandit_v2 = ["pytorch-lightning", "torchaudio>=2.0.1,<2.12"]
 bs_conformer = ["beartype", "einops", "packaging", "rotary-embedding-torch"]
 bs_mamba2 = [
   "packaging",
@@ -86,9 +97,9 @@ bs_roformer_experimental = [
   "rotary-embedding-torch"
 ]
 conformer = ["conformer"]
-experimental_mdx23c_stht = ["loralib"]
+experimental_mdx23c_stht = []
 htdemucs = ["demucs", "einops", "openunmix"]
-mdx23c = ["loralib"]
+mdx23c = []
 mel_band_conformer = [
   "beartype",
   "einops",
@@ -116,29 +127,30 @@ scnet_tran = ["einops", "rotary-embedding-torch", "packaging"]
 scnet_unofficial = [
   "beartype",
   "einops",
-  "mamba-ssm ; platform_system == 'Linux' and platform_machine == 'x86_64'"
+  "torchaudio>=2.0.1,<2.12"
 ]
 segm_models = ["segmentation-models-pytorch", "timm"]
 swin_upernet = ["transformers"]
 torchseg = ["torchseg", "timm"]
 
+[project.scripts]
+msst-inference = "msst.cli:inference"
+msst-train = "msst.cli:train"
+
 [build-system]
-requires = ["setuptools>=80", "setuptools-scm>=8"]
+requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { attr = "msst._version.__version__" }
 
 [tool.setuptools]
 include-package-data = true
-py-modules = [
-  "ensemble",
-  "inference",
-  "train",
-  "train_accelerate",
-  "train_ddp",
-  "valid",
-  "valid_ddp"
-]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["configs*", "gui*", "models*", "scripts*", "utils*"]
+include = ["msst*"]
 namespaces = true
+
+[tool.setuptools.package-data]
+"msst.models.bandit.core.data.musdb" = ["validation.yaml"]

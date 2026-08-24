@@ -94,6 +94,22 @@ Typical use cases:
 - Consistency losses
 - Training with real mixes not equal to sum of stems
 
+For sparse multi-stem datasets that already contain an explicit `mixture`, a
+single-target model can reuse the original dataset without materializing a
+separate `other` stem:
+
+```yaml
+training:
+  instruments: ['synth_bass', 'other']
+  target_instrument: synth_bass
+  single_target_from_mixture: true
+```
+
+With this option, metadata contains only folders where `target_instrument`
+exists. Missing non-target stems (such as `other`) are allowed, the model input
+is read from `mixture.wav`/`mixture.flac`, and the loss is computed only for the
+configured target. Use this option with dataset type 6.
+
 
 ### Type 7 (Class-Balanced Aligned Dataset)
 
@@ -129,6 +145,52 @@ Typical use cases:
 - Improving performance on rare instruments
 - Conditional or multi-head source separation models
 
+### Type 8 (Synthetic Dereverberation)
+
+An aligned wet-to-dry dataset for dereverberation training.
+
+The source dataset uses normal separated stems. Stem names may differ between
+tracks:
+```
+--- Song 1:
+------ drums.wav
+------ bass.wav
+------ other.wav
+------ vocals.wav
+--- Song 2:
+------ violin_1.flac
+------ violin_2.flac
+------ cello.flac
+```
+
+The model target is a single dry stem named by `training.instruments`
+and `training.target_instrument` (usually `orig`). Internally the dataset:
+1. Chooses one track and an aligned chunk.
+2. Loads all audio stems found in that track by default.
+3. Builds `dry = sum(stems)`.
+4. Randomly chooses no stems, all stems, or 1..N stems.
+5. Adds reverb to the chosen stems using IR files and/or algorithmic reverb.
+6. Returns `target=orig/dry` and `mixture=wet`.
+
+Important config keys:
+- `reverb.source_instruments`: omit it or set it to `all`, `auto`, or `*` to
+  load every stem in each track. Set an explicit array such as
+  `['drums', 'bass', 'other', 'vocals']` to keep the previous fixed-name
+  behavior.
+- `reverb.source_extensions`: extensions used for source discovery. Defaults
+  to `['wav', 'flac']`.
+- `reverb.exclude_instruments`: exact basenames ignored in automatic mode.
+  Defaults to `['mixture', 'reverb', 'orig']`.
+- `reverb.ir_paths`: folders or files with impulse responses.
+- `reverb.method_weights`: weights for `ir`, `algorithmic`, and optional `pedalboard`.
+- `reverb.none_probability`, `reverb.all_probability`, `reverb.min_reverb_stems`, `reverb.max_reverb_stems`: stem selection behavior.
+- `reverb.wet_level_min/max`, `reverb.dry_level_min/max`: wet/dry blend for reverberated stems.
+
+Typical use cases:
+- `wet -> dry` dereverberation
+- Training with on-the-fly randomized room coloration
+- Avoiding overfitting to one specific IR dataset or one instrument class
+
 ### Dataset for validation
 
 * The validation dataset must be the same structure as type 1 datasets (regardless of what type of dataset you're using for training), but also each folder must include `mixture.wav` for each song. `mixture.wav` - is the sum of all stems for song.
@@ -150,3 +212,13 @@ Example:
 --- Song 3:
 ...........
 ```
+
+For dereverberation validation, configs can set:
+```
+inference:
+  mixture_names: ['reverb', 'mixture']
+training:
+  instruments: ['orig']
+  target_instrument: orig
+```
+Then validation folders may contain `reverb.wav` as model input and `orig.wav` as the target.

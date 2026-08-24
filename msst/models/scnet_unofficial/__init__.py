@@ -1,0 +1,1 @@
+from msst.models.scnet_unofficial.scnet import SCNet
