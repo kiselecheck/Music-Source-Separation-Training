@@ -34,9 +34,10 @@ PyPI does not allow replacing an uploaded version, so a failed or incorrect
 release must be followed by a new version number.
 
 Before tagging, install the wheel into a fresh environment outside the source
-checkout. Confirm that `import msst`, `msst-inference --help`,
-`msst-valid --help`, and `msst-train --help` resolve from that environment, then
-run small inference, validation, and one-step training smoke tests with external
+checkout. Confirm that `import msst`, `msst --help`, `msst-inference --help`,
+`msst-valid --help`, `msst-train --help`, and `msst-check --help` resolve from
+that environment. Run `msst init` in a temporary directory, then run small
+inference, validation, and full preflight/training smoke tests with external
 configs, checkpoints, and audio.
 
 ## Package layout

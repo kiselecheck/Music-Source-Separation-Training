@@ -10,7 +10,10 @@ artifacts: they are passed as paths and are not embedded in the wheel.
 - [API at a glance](#api-at-a-glance)
 - [Inference](#inference)
 - [Validation](#validation)
+- [Dataset metadata](#dataset-metadata)
+- [Preflight checks](#preflight-checks)
 - [Training](#training)
+- [Experiments and run tracking](#experiments-and-run-tracking)
 - [Typing and errors](#typing-and-errors)
 - [Backward compatibility](#backward-compatibility)
 
@@ -37,6 +40,9 @@ Other common extras are `mel_band_roformer`, `scnet_unofficial`, `gui`,
 | Reuse one loaded model | `msst.Separator(...)` | `dict[str, numpy.ndarray]` per input | — |
 | Evaluate a checkpoint | `msst.valid(...)` | `msst.ValidationResult` | `msst-valid` |
 | Train or fine-tune | `msst.train(...)` | `None`; artifacts are written to disk | `msst-train` |
+| Build training metadata | `msst.build_metadata(...)` | `msst.MetadataResult` | `msst metadata` |
+| Check a training run | `msst.check(...)` | `msst.CheckReport` | `msst check` |
+| Initialize experiment | `msst.init_experiment(...)` | `msst.Experiment` | `msst init` |
 
 All public functions use keyword-only arguments. Paths accept `str` or
 `os.PathLike[str]`, including `pathlib.Path`. Run any command with `--help` for
@@ -82,6 +88,8 @@ written = msst.inference(
 | `lora_checkpoint_peft` | path or `None` | Optional PEFT LoRA weights. |
 | `lora_checkpoint_loralib` | path or `None` | Optional loralib weights. |
 | `skip_errors` | `bool = False` | Log unreadable inputs and continue instead of failing the batch. |
+| `experiment` | path, `Experiment`, or `None` | Optional local run tracking. |
+| `run_name` | `str` or `None` | Optional tracked run label. |
 
 Available template fields are `{instr}`, `{start_time}`, `{file_name}`,
 `{dir_name}`, `{relative_path}`, `{extension}`, `{model_type}`, and `{model}`.
@@ -167,6 +175,8 @@ print(result.per_track["sdr"])     # instrument -> individual scores
 | `lora_checkpoint_peft` | path or `None` | Optional PEFT LoRA weights. |
 | `lora_checkpoint_loralib` | path or `None` | Optional loralib weights. |
 | `verbose` | `bool = False` | Print paths, progress, and aggregate metrics. |
+| `experiment` | path, `Experiment`, or `None` | Optional local run tracking. |
+| `run_name` | `str` or `None` | Optional tracked run label. |
 
 Supported metrics are exposed as `msst.SUPPORTED_VALIDATION_METRICS` and typed
 as `msst.ValidationMetric`: `sdr`, `k_sdr`, `si_sdr`, `l1_freq`,
@@ -178,6 +188,74 @@ as `msst.ValidationMetric`: `sdr`, `k_sdr`, `si_sdr`, `l1_freq`,
 `dict[str, dict[str, list[float]]]`, organized as metric → instrument → scores.
 `ValidationConfig` can be used independently to validate and normalize public
 arguments before a run.
+
+## Dataset metadata
+
+`build_metadata` is the one metadata scanner used by the API, CLI,
+`scripts/do_metadata.py`, and normal training. It does not construct a
+DataLoader merely to trigger a side effect.
+
+```python
+result = msst.build_metadata(
+    config_path="configs/model.yaml",
+    data_path=("datasets/train-a", "datasets/train-b"),
+    results_path="results/run-01",
+    model_type="bs_roformer",
+    dataset_type=1,
+    num_workers=16,
+)
+print(result.path, result.track_count, result.fingerprint)
+```
+
+| Parameter | Type / default | Meaning |
+| --- | --- | --- |
+| `config_path` | path, required | Training/model YAML. |
+| `data_path` | path or sequence, required | Dataset roots. |
+| `results_path` | path or `None` | Receives `metadata_<type>.pkl`. |
+| `metadata_path` | path or `None` | Explicit cache path, used instead of `results_path`. |
+| `model_type` | `str = "mdx23c"` | Selects the correct config loader. |
+| `dataset_type` | `int = 1` | Dataset layout from 1 through 8. |
+| `num_workers` | `int` or `None` | Metadata reader worker count. |
+| `refresh` | `bool = False` | Ignore existing cached entries. |
+| `verbose` | `bool = True` | Print scan progress. |
+
+The adjacent JSON manifest records config hash, resolved roots, entry count,
+MSST version, and metadata fingerprint. Pickle remains the runtime cache format
+for compatibility.
+
+## Preflight checks
+
+There are intentionally exactly two modes:
+
+```python
+report = msst.check(
+    mode="full",
+    model_type="bs_roformer",
+    config_path="configs/model.yaml",
+    checkpoint_path="weights/start.ckpt",
+    data_path="datasets/train",
+    valid_path="datasets/valid",
+    results_path="results/run-01",
+    device_ids=0,
+    dataset_type=1,
+    memory_headroom=0.15,
+)
+report.raise_for_errors()
+```
+
+- `safe` checks paths, YAML/model construction, optional dependencies,
+  checkpoint compatibility, actual dataset audio metadata, CUDA visibility,
+  output writability, and a conservative lower-bound memory estimate. It does
+  not execute forward or backward.
+- `full` includes all safe checks and runs one canonical batch through forward,
+  configured loss, backward, and one in-memory optimizer step. It never writes
+  model weights. `peak_allocated_gib` and `peak_reserved_gib` report the measured
+  GPU peak, including optimizer-state allocation.
+
+`CheckReport.ok` is false on errors; `errors` and `warnings` contain typed
+`CheckItem` values. A successful full step proves that representative batch
+fits. Random augmentations and future batches can still differ, so this is not
+an absolute OOM guarantee.
 
 ## Training
 
@@ -195,6 +273,8 @@ msst.train(
     data_path=("datasets/train_a", "datasets/train_b"),
     valid_path="datasets/validation",
     device_ids=(0, 1),
+    launcher="ddp",
+    experiment="experiments/vocals-v3",
     num_workers=8,
     wandb_offline=True,
 )
@@ -205,10 +285,13 @@ msst.train(
 | `config_path` | path, required | YAML training/model configuration. |
 | `results_path` | path, required | Checkpoints, history, and metadata destination. |
 | `data_path` | path or sequence, required | One or more training dataset roots. |
-| `valid_path` | path or sequence or `None` | Optional validation roots. |
+| `valid_path` | path or sequence, required | Validation roots used after every epoch. |
 | `model_type` | `str = "mdx23c"` | Architecture key. |
 | `checkpoint_path` | path or `None` | Optional initialization/resume checkpoint. |
 | `device_ids` | `int \| Sequence[int] = (0,)` | Training CUDA devices. |
+| `launcher` | `"standard" \| "ddp" \| "accelerate"` | Runtime; default is `standard`. |
+| `experiment` | path, `Experiment`, or `None` | Optional run tracking. |
+| `run_name` | `str` or `None` | Optional tracked run label. |
 | `**options` | typed scalar/sequence values | Additional names listed below and by `msst-train --help`. |
 
 Accepted `**options` use the same names as the CLI:
@@ -227,16 +310,51 @@ Exact defaults, choices, and CLI descriptions are available from
 `msst-train --help`; architecture, optimizer, schedule, batch size, segment
 length, and epoch settings remain in the YAML config. `train` returns `None`.
 
+The equivalent unified commands are:
+
+```bash
+msst train --launcher standard ...
+msst train --launcher ddp ...
+msst train --launcher accelerate ...
+```
+
+`msst-train`, `msst-train-ddp`, and `msst-train-accelerate` remain direct
+aliases. DDP sends rank-zero output to the main console and preserves other
+rank output in `results_path/ddp_logs/rank_<N>.log`.
+
+The DDP launcher spawns one process per requested `device_ids` entry.
+Accelerate process creation remains owned by `accelerate launch`; selecting
+`--launcher accelerate` chooses the runtime inside each launched process.
+
 New checkpoints contain compatibility metadata such as `format_version`,
 `msst_version`, `model_type`, selected stem, and stem count when known. Configs
 and checkpoints have versions independent of the Python distribution; see
 [model artifact versioning](model_artifacts.md).
 
+## Experiments and run tracking
+
+```python
+experiment = msst.init_experiment("experiments/dereverb-v5")
+msst.train(..., experiment=experiment, run_name="baseline")
+```
+
+The initializer creates `configs/`, `checkpoints/`, `jobs/`, `logs/`,
+`results/`, and `runs/` plus `experiment.yaml`. It creates no Slurm or other
+scheduler configuration. The same experiment works locally and in a scheduled
+job.
+
+Tracking is opt-in. Each call to `train`, `valid`, or `inference` with an
+`experiment` creates `runs/<timestamp>-<task>-<id>/run.json`, snapshots the
+config, hashes config/checkpoint inputs, records Python/PyTorch/CUDA/GPU and
+available Slurm environment fields, and marks the run completed or failed.
+The caller still chooses every data, results, and log path.
+
 ## Typing and errors
 
 The wheel includes `py.typed`, so IDEs, Pyright, and mypy consume the public
-annotations directly. Use `help(msst.inference)`, `help(msst.valid)`, or
-`help(msst.train)` for the installed version's docstrings and signatures.
+annotations directly. Use `help(msst.inference)`, `help(msst.valid)`,
+`help(msst.train)`, `help(msst.check)`, or `help(msst.build_metadata)` for the
+installed version's docstrings and signatures.
 
 Public package errors inherit from `msst.MSSTError`:
 

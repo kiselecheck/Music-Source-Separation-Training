@@ -32,7 +32,10 @@ pip install "msst[train,bs_roformer]"              # training
 | --- | --- | --- |
 | Separate files | `msst.inference(...)` or `msst.Separator(...)` | `msst-inference` |
 | Evaluate a checkpoint | `msst.valid(...)` | `msst-valid` |
-| Train or fine-tune | `msst.train(...)` | `msst-train` |
+| Train or fine-tune | `msst.train(...)` | `msst train` or `msst-train` |
+| Build dataset metadata | `msst.build_metadata(...)` | `msst metadata` |
+| Check a planned run | `msst.check(...)` | `msst check` |
+| Create an experiment layout | `msst.init_experiment(...)` | `msst init` |
 
 ```python
 import msst
@@ -60,6 +63,9 @@ print(scores.averages)
 All public functions use keyword arguments and accept `pathlib.Path` as well
 as strings. See the [complete Python API reference](docs/python_api.md) for
 parameter tables, return values, examples, and error behavior.
+
+The unified command is `msst`. Existing commands such as `msst-train` and
+`msst-valid` remain compatibility aliases.
 
 ## Supported models
 
@@ -114,6 +120,55 @@ python train.py \
 Use `msst-train --help` for the CLI contract. The equivalent Python parameters
 and less-common training options are listed in the
 [Python API reference](docs/python_api.md#training).
+
+Choose the multi-GPU runtime explicitly when needed:
+
+```bash
+msst train --launcher standard ...     # CPU, one GPU, or DataParallel
+msst train --launcher ddp ...          # DistributedDataParallel
+msst train --launcher accelerate ...   # Hugging Face Accelerate runtime
+```
+
+All three launchers accept the same training CLI. In DDP mode rank 0 owns the
+main console/Slurm output; output from other ranks is retained under
+`RESULTS/ddp_logs/` instead of being repeated in the main log.
+
+Before a long job, run either the non-forward check or one real train-step:
+
+```bash
+msst check --mode safe --config_path config.yaml --data_path data/train \
+  --valid_path data/valid --results_path results --model_type bs_roformer
+
+msst check --mode full --config_path config.yaml --data_path data/train \
+  --valid_path data/valid --results_path results --model_type bs_roformer \
+  --start_check_point weights/model.ckpt --device_ids 0
+```
+
+`full` executes forward, loss, backward, and one in-memory optimizer step
+without a checkpoint write, and reports peak VRAM. It is a representative real batch,
+not a mathematical guarantee for every random augmentation.
+
+## Portable experiments
+
+`msst init experiments/dereverb-v5` creates only scheduler-neutral structure:
+
+```text
+dereverb-v5/
+├── experiment.yaml
+├── configs/
+├── checkpoints/
+├── jobs/
+├── logs/
+├── results/
+└── runs/
+```
+
+The `jobs/` directory is intentionally empty: local scripts, Slurm `.sh`
+files, or jobs for another scheduler remain user-owned. Pass
+`experiment="experiments/dereverb-v5"` to `msst.train`, `msst.valid`, or
+`msst.inference` to create a run record containing arguments, environment,
+config snapshot, input hashes, status, and artifacts. Output paths are not
+silently changed by tracking.
 
 ### Training with LoRA
 
@@ -185,8 +240,6 @@ python inference.py \
 Use `msst-inference --help` for every CLI option or the
 [Python API reference](docs/python_api.md#one-off-folder-inference) for typed
 keyword parameters.
-
-Convert models to ONNX and TensorRT formats [here](https://github.com/ZFTurbo/MSS_ONNX_TensorRT).
 
 ## How to: Validate
 

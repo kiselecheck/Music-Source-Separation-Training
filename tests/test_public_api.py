@@ -382,6 +382,7 @@ def test_training_missing_dependency_has_install_hint(monkeypatch):
     "kwargs, message",
     [
         ({"data_path": []}, "data_path"),
+        ({"valid_path": []}, "valid_path"),
         ({"device_ids": []}, "device_ids"),
         ({"device_ids": [-1]}, "negative"),
         ({"device_ids": [0, 0]}, "unique"),
@@ -392,6 +393,7 @@ def test_training_rejects_invalid_public_arguments(kwargs, message):
         "config_path": "model.yaml",
         "results_path": "results",
         "data_path": ["dataset"],
+        "valid_path": ["validation"],
     }
     values.update(kwargs)
     with pytest.raises((TypeError, ValueError), match=message):
