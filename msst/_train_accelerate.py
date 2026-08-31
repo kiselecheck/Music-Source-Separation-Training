@@ -3,7 +3,6 @@ __author__ = 'Roman Solovyev (ZFTurbo): https://github.com/ZFTurbo/'
 # Read more here:
 # https://huggingface.co/docs/accelerate/index
 
-import argparse
 import soundfile as sf
 import numpy as np
 import time
@@ -12,24 +11,25 @@ from tqdm.auto import tqdm
 import os
 import torch
 import wandb
-import auraloss
-import torch.nn as nn
 from torch.optim import Adam, AdamW, SGD, RAdam, RMSprop
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-import torch.nn.functional as F
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 from accelerate import Accelerator
 
-from msst.utils.dataset import MSSDataset
-from msst.utils.model_utils import demix, prefer_target_instrument, load_not_compatible_weights
+from msst.utils.dataset import MSSDataset, _training_collate_fn
+from msst.utils.model_utils import demix, prefer_target_instrument, load_start_checkpoint
 from msst.utils.metrics import sdr
-from msst.utils.settings import manual_seed, get_model_from_config
-from msst.utils.losses import masked_loss
+from msst.utils.settings import (
+    manual_seed,
+    get_model_from_config,
+    parse_args_train,
+    validate_train_args,
+    wandb_init,
+)
+from msst.utils.losses import choice_loss
+from msst._training import compute_training_loss
 from msst.checkpoints import build_checkpoint_metadata
-import warnings
-
-warnings.filterwarnings("ignore")
 
 
 def valid(model, valid_loader, args, config, device, verbose=False):
@@ -90,33 +90,16 @@ class MSSValidationDataset(torch.utils.data.Dataset):
 def train_model(args):
     accelerator = Accelerator()
     device = accelerator.device
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_type", type=str, default='mdx23c', help="One of mdx23c, htdemucs, segm_models, mel_band_roformer, bs_roformer, swin_upernet, bandit")
-    parser.add_argument("--config_path", type=str, help="path to config file")
-    parser.add_argument("--start_check_point", type=str, default='', help="Initial checkpoint to start training")
-    parser.add_argument("--results_path", type=str, help="path to folder where results will be stored (weights, metadata)")
-    parser.add_argument("--data_path", nargs="+", type=str, help="Dataset data paths. You can provide several folders.")
-    parser.add_argument("--dataset_type", type=int, default=1, help="Dataset type. Must be one of: 1, 2, 3 or 4. Details here: https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/dataset_types.md")
-    parser.add_argument("--valid_path", nargs="+", type=str, help="validation data paths. You can provide several folders.")
-    parser.add_argument("--num_workers", type=int, default=0, help="dataloader num_workers")
-    parser.add_argument("--pin_memory", type=bool, default=False, help="dataloader pin_memory")
-    parser.add_argument("--seed", type=int, default=0, help="random seed")
-    parser.add_argument("--device_ids", nargs='+', type=int, default=[0], help='list of gpu ids')
-    parser.add_argument("--use_multistft_loss", action='store_true', help="Use MultiSTFT Loss (from auraloss package)")
-    parser.add_argument("--use_mse_loss", action='store_true', help="Use default MSE loss")
-    parser.add_argument("--use_l1_loss", action='store_true', help="Use L1 loss")
-    parser.add_argument("--wandb_key", type=str, default='', help='wandb API Key')
-    parser.add_argument("--pre_valid", action='store_true', help='Run validation before training')
-    if args is None:
-        args = parser.parse_args()
-    else:
-        args = parser.parse_args(args)
+    args = validate_train_args(parse_args_train(args))
 
     manual_seed(args.seed + int(time.time()))
     # torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = False # Fix possible slow down with dilation convolutions
-    torch.multiprocessing.set_start_method('spawn')
+    try:
+        torch.multiprocessing.set_start_method('spawn')
+    except RuntimeError as error:
+        if "context has already been set" not in str(error):
+            raise
 
     model, config = get_model_from_config(
         args.model_type,
@@ -139,22 +122,36 @@ def train_model(args):
     batch_size = config.training.batch_size
 
     # wandb
-    if accelerator.is_main_process and args.wandb_key is not None and args.wandb_key.strip() != '':
-        wandb.login(key = args.wandb_key)
-        wandb.init(project = 'msst-accelerate', config = { 'config': config, 'args': args, 'device_ids': device_ids, 'batch_size': batch_size })
+    if accelerator.is_main_process:
+        wandb_init(args, config, batch_size)
     else:
         wandb.init(mode = 'disabled')
 
     # Fix for num of steps
     config.training.num_steps *= accelerator.num_processes
 
+    metadata_path = os.path.join(
+        args.results_path, 'metadata_{}.pkl'.format(args.dataset_type)
+    )
+    if accelerator.is_main_process:
+        MSSDataset.collect_metadata(
+            config,
+            args.data_path,
+            metadata_path=metadata_path,
+            dataset_type=args.dataset_type,
+            verbose=accelerator.is_main_process,
+            reuse=True,
+        )
+    accelerator.wait_for_everyone()
+    metadata = MSSDataset.load_metadata(metadata_path)
     trainset = MSSDataset(
         config,
         args.data_path,
         batch_size=batch_size,
-        metadata_path=os.path.join(args.results_path, 'metadata_{}.pkl'.format(args.dataset_type)),
+        metadata_path=metadata_path,
         dataset_type=args.dataset_type,
         verbose=accelerator.is_main_process,
+        metadata=metadata,
     )
 
     train_loader = DataLoader(
@@ -162,7 +159,10 @@ def train_model(args):
         batch_size=batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=args.pin_memory
+        pin_memory=args.pin_memory,
+        persistent_workers=args.persistent_workers,
+        prefetch_factor=args.prefetch_factor,
+        collate_fn=_training_collate_fn(config, args.dataset_type),
     )
 
     validset = MSSValidationDataset(args)
@@ -184,7 +184,7 @@ def train_model(args):
                 weights_only=False,
                 map_location='cpu',
             )
-            load_not_compatible_weights(model, checkpoint, verbose=False)
+            load_start_checkpoint(args, model, checkpoint, type_='train')
         else:
             model.load_state_dict(
                 torch.load(args.start_check_point)
@@ -235,15 +235,8 @@ def train_model(args):
         factor=config.training.reduce_factor
     )
 
-    if args.use_multistft_loss:
-        try:
-            loss_options = dict(config.loss_multistft)
-        except:
-            loss_options = dict()
-        accelerator.print('Loss options: {}'.format(loss_options))
-        loss_multistft = auraloss.freq.MultiResolutionSTFTLoss(
-            **loss_options
-        )
+    multi_loss = choice_loss(args, config)
+    use_amp = bool(getattr(config.training, 'use_amp', True))
 
     model, optimizer, train_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, scheduler)
 
@@ -287,35 +280,17 @@ def train_model(args):
         total = 0
 
         pbar = tqdm(train_loader, disable=not accelerator.is_main_process)
-        for i, (batch, mixes) in enumerate(pbar):
-            y = batch
-            x = mixes
-
-            if args.model_type in ['mel_band_roformer', 'bs_roformer', 'bs_mamba2', 'mel_band_conformer', 'bs_conformer']:
-                # loss is computed in forward pass
-                loss = model(x, y)
-            else:
-                y_ = model(x)
-                if args.use_multistft_loss:
-                    y1_ = torch.reshape(y_, (y_.shape[0], y_.shape[1] * y_.shape[2], y_.shape[3]))
-                    y1 = torch.reshape(y, (y.shape[0], y.shape[1] * y.shape[2], y.shape[3]))
-                    loss = loss_multistft(y1_, y1)
-                    # We can use many losses at the same time
-                    if args.use_mse_loss:
-                        loss += 1000 * nn.MSELoss()(y1_, y1)
-                    if args.use_l1_loss:
-                        loss += 1000 * F.l1_loss(y1_, y1)
-                elif args.use_mse_loss:
-                    loss = nn.MSELoss()(y_, y)
-                elif args.use_l1_loss:
-                    loss = F.l1_loss(y_, y)
-                else:
-                    loss = masked_loss(
-                        y_,
-                        y,
-                        q=config.training.q,
-                        coarse=config.training.coarse_loss_clip
-                    )
+        for i, data in enumerate(pbar):
+            loss, _ = compute_training_loss(
+                model,
+                config,
+                args,
+                data,
+                device,
+                args.device_ids,
+                multi_loss,
+                use_amp,
+            )
 
             accelerator.backward(loss)
             if config.training.grad_clip:

@@ -134,8 +134,14 @@ swin_upernet = ["transformers"]
 torchseg = ["torchseg", "timm"]
 
 [project.scripts]
+msst = "msst.cli:main"
+msst-check = "msst.cli:check"
 msst-inference = "msst.cli:inference"
+msst-init = "msst.cli:init"
+msst-metadata = "msst.cli:metadata"
 msst-train = "msst.cli:train"
+msst-train-accelerate = "msst.cli:train_accelerate"
+msst-train-ddp = "msst.cli:train_ddp"
 msst-valid = "msst.cli:valid"
 
 [build-system]
@@ -161,7 +167,10 @@ namespaces = true
 check_untyped_defs = true
 files = [
   "msst/__init__.py",
+  "msst/experiments.py",
   "msst/inference.py",
+  "msst/metadata.py",
+  "msst/preflight.py",
   "msst/training.py",
   "msst/validation.py",
 ]

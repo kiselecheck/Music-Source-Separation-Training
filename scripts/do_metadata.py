@@ -1,9 +1,17 @@
-from msst.utils.dataset import prepare_data
-from msst.utils.settings import get_model_from_config, parse_args_train
+"""Compatibility wrapper around the public metadata API."""
+
+from msst import build_metadata
+from msst.utils.settings import parse_args_train
+
 
 args = parse_args_train(None)
-_, config = get_model_from_config(args.model_type, args.config_path)
-
-batch_size = config.training.batch_size * args.device_ids
-
-prepare_data(config, args, batch_size)
+result = build_metadata(
+    config_path=args.config_path,
+    data_path=args.data_path,
+    results_path=args.results_path,
+    model_type=args.model_type,
+    dataset_type=args.dataset_type,
+    num_workers=args.num_workers or None,
+)
+print(f"Metadata: {result.path}")
+print(f"Track entries: {result.track_count}")

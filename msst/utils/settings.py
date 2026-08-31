@@ -156,6 +156,19 @@ def parse_args_train(dict_args: Union[argparse.Namespace, Dict, None]) -> argpar
     parser.add_argument("--freeze_layers", nargs="+", type=str,
                         help="List of layers to freeze. Use prefixes e.g. layer1 - will freeze all layers whose names "
                              "starts with layer1. You can set mulitple parameters.")
+    parser.add_argument(
+        "--launcher",
+        choices=["standard", "ddp", "accelerate"],
+        default="standard",
+        help="Training runtime: standard, DDP, or Accelerate",
+    )
+    parser.add_argument(
+        "--experiment",
+        type=str,
+        default="",
+        help="Optional directory created by 'msst init' for run tracking",
+    )
+    parser.add_argument("--run_name", type=str, default="", help="Optional tracked run label")
 
     if dict_args is not None:
         args = _merge_argument_overrides(parser, dict_args)
@@ -169,6 +182,34 @@ def parse_args_train(dict_args: Union[argparse.Namespace, Dict, None]) -> argpar
                          ) and not args.use_standard_loss
     if get_internal_loss:
         args.loss = [f'{args.model_type}_loss']
+    return args
+
+
+def validate_train_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Validate arguments required by every training launcher."""
+
+    for name in ("config_path", "results_path"):
+        value = getattr(args, name, None)
+        if value is None or not str(value).strip():
+            raise ValueError(f"--{name} is required")
+    for name in ("data_path", "valid_path"):
+        value = getattr(args, name, None)
+        if not value:
+            raise ValueError(f"--{name} requires at least one path")
+    if args.dataset_type not in range(1, 9):
+        raise ValueError("--dataset_type must be between 1 and 8")
+    if args.num_workers < 0:
+        raise ValueError("--num_workers cannot be negative")
+    if args.persistent_workers and args.num_workers == 0:
+        raise ValueError("--persistent_workers requires --num_workers > 0")
+    if args.prefetch_factor is not None and args.num_workers == 0:
+        raise ValueError("--prefetch_factor requires --num_workers > 0")
+    if not args.device_ids:
+        raise ValueError("--device_ids requires at least one CUDA index")
+    if any(device_id < 0 for device_id in args.device_ids):
+        raise ValueError("--device_ids cannot contain negative CUDA indices")
+    if len(set(args.device_ids)) != len(args.device_ids):
+        raise ValueError("--device_ids must contain unique CUDA indices")
     return args
 
 
@@ -216,6 +257,8 @@ def parse_args_valid(dict_args: Union[Dict, None]) -> argparse.Namespace:
     parser.add_argument("--lora_checkpoint_peft", type=str, default='', help="Initial checkpoint to LoRA weights")
     parser.add_argument("--lora_checkpoint_loralib", type=str, default='', help="Initial checkpoint to LoRA weights")
     parser.add_argument("--verbose", action='store_true', help='Print validation paths and detailed metrics')
+    parser.add_argument("--experiment", type=str, default="", help="Optional MSST experiment directory")
+    parser.add_argument("--run_name", type=str, default="", help="Optional tracked run label")
 
 
     if dict_args is not None:
@@ -273,6 +316,8 @@ def parse_args_inference(dict_args: Union[Dict, None]) -> argparse.Namespace:
     parser.add_argument("--lora_checkpoint_loralib", type=str, default='', help="Initial checkpoint to LoRA weights")
     parser.add_argument("--skip_errors", action='store_true',
                         help="Report unreadable tracks and continue processing the folder")
+    parser.add_argument("--experiment", type=str, default="", help="Optional MSST experiment directory")
+    parser.add_argument("--run_name", type=str, default="", help="Optional tracked run label")
     if dict_args is not None:
         args = _merge_argument_overrides(parser, dict_args)
     else:
@@ -631,7 +676,13 @@ def initialize_environment(seed: int, results_path: str) -> None:
     os.makedirs(results_path, exist_ok=True)
 
 
-def initialize_environment_ddp(rank: int, world_size: int, seed: int = 0, resuls_path: str = None) -> None:
+def initialize_environment_ddp(
+    rank: int,
+    world_size: int,
+    seed: int = 0,
+    resuls_path: str = None,
+    device_id: int | None = None,
+) -> None:
     """
     Initialize environment for Distributed Data Parallel (DDP) training/validation.
 
@@ -650,7 +701,7 @@ def initialize_environment_ddp(rank: int, world_size: int, seed: int = 0, resuls
         None
     """
     seed = (seed + int(time.time())) % 55535 + 10000
-    setup_ddp(rank, world_size, seed)
+    setup_ddp(rank, world_size, seed, device_id=device_id)
     manual_seed(seed)
 
     try:
@@ -737,7 +788,12 @@ def find_free_port():
         return s.getsockname()[1]
 
 
-def setup_ddp(rank: int, world_size: int, seed: int) -> None:
+def setup_ddp(
+    rank: int,
+    world_size: int,
+    seed: int,
+    device_id: int | None = None,
+) -> None:
     """
     Initialize a Distributed Data Parallel (DDP) process group.
 
@@ -754,8 +810,8 @@ def setup_ddp(rank: int, world_size: int, seed: int) -> None:
         None
     """
 
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = str(seed)
+    os.environ.setdefault('MASTER_ADDR', '127.0.0.1')
+    os.environ.setdefault('MASTER_PORT', str(seed))
     os.environ["USE_LIBUV"] = "0"
     try:
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
@@ -764,7 +820,7 @@ def setup_ddp(rank: int, world_size: int, seed: int) -> None:
         if dist.get_rank() == 0:
             print(f'NCCL are not available. Using "gloo" backend.')
 
-    torch.cuda.set_device(rank)
+    torch.cuda.set_device(rank if device_id is None else device_id)
 
 
 def cleanup_ddp() -> None:
@@ -777,4 +833,5 @@ def cleanup_ddp() -> None:
     Returns:
         None
     """
-    dist.destroy_process_group()
+    if dist.is_initialized():
+        dist.destroy_process_group()

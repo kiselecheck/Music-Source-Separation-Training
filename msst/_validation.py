@@ -790,7 +790,8 @@ def valid_multi_gpu(
         rank = dist.get_rank()
         world_size = dist.get_world_size()
 
-        device = torch.device(f"cuda:{rank}")
+        device_id = args.device_ids[rank]
+        device = torch.device(f"cuda:{device_id}")
         model.to(device)
         model.eval()
 

@@ -17,7 +17,7 @@ import torch.distributed as dist
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 
 from msst.utils.settings import get_scheduler, parse_args_train, initialize_environment_ddp, \
-    initialize_environment, get_model_from_config, wandb_init
+    initialize_environment, get_model_from_config, validate_train_args, wandb_init
 from msst.utils.model_utils import save_weights, normalize_batch, \
     save_last_weights, initialize_model_and_device
 
@@ -149,6 +149,84 @@ def forward_step(x, y, active_stem_mask, get_internal_loss, model, multi_loss,
         return multi_loss(y_, y, x, loss_active_stem_mask)
 
 
+def compute_training_loss(
+    model: torch.nn.Module,
+    config: ConfigDict,
+    args: argparse.Namespace,
+    data,
+    device: torch.device,
+    device_ids,
+    multi_loss,
+    use_amp: bool,
+):
+    """Compute one real training loss using the canonical batch semantics.
+
+    This function is shared by full preflight checks and actual training, so a
+    successful check exercises the same normalization, stem masking, forward,
+    and loss path used inside an epoch.
+    """
+
+    if len(data) == 3:
+        batch, mixes, active_stem_mask = data
+    elif len(data) == 2:
+        batch, mixes = data
+        active_stem_mask = None
+    else:
+        raise ValueError(f'Expected a 2- or 3-item training batch, got {len(data)}')
+
+    model_active_stem_ids = None
+    if args.model_type == 'scnet' and isinstance(active_stem_mask, torch.Tensor):
+        if active_stem_mask.ndim != 2 or tuple(active_stem_mask.shape) != tuple(batch.shape[:2]):
+            raise ValueError(
+                "SCNet active_stem_mask must match target [batch, stems], "
+                f"got {tuple(active_stem_mask.shape)} for target {tuple(batch.shape)}"
+            )
+        active_stem_ids_tensor = torch.nonzero(
+            active_stem_mask.any(dim=0), as_tuple=False
+        ).flatten()
+        if active_stem_ids_tensor.numel() == 0:
+            raise ValueError("active_stem_mask does not contain any active stems")
+        model_active_stem_ids = active_stem_ids_tensor.tolist()
+        batch = batch.index_select(1, active_stem_ids_tensor)
+        active_stem_mask = active_stem_mask.index_select(
+            1, active_stem_ids_tensor
+        )
+
+    x = mixes.to(device)
+    y = batch.to(device)
+    if isinstance(active_stem_mask, torch.Tensor):
+        active_stem_mask = active_stem_mask.to(device=device, dtype=torch.bool)
+
+    if getattr(config.training, 'normalize', False):
+        x, y = normalize_batch(x, y)
+    get_internal_loss = (
+        args.model_type in (
+            'mel_band_roformer',
+            'bs_roformer',
+            'bs_mamba2',
+            'mel_band_conformer',
+            'bs_conformer',
+        )
+        and not args.use_standard_loss
+    )
+    with torch.autocast(
+        device_type=device.type,
+        enabled=bool(use_amp and device.type == 'cuda'),
+    ):
+        loss = forward_step(
+            x,
+            y,
+            active_stem_mask,
+            get_internal_loss,
+            model,
+            multi_loss,
+            device_ids,
+            args.model_type,
+            model_active_stem_ids,
+        )
+    return loss, active_stem_mask
+
+
 
 def train_one_epoch(model: torch.nn.Module, config: ConfigDict, args: argparse.Namespace,
                     optimizer: torch.optim.Optimizer,
@@ -191,16 +269,6 @@ def train_one_epoch(model: torch.nn.Module, config: ConfigDict, args: argparse.N
     total = 0
     all_losses[f'epoch_{epoch}'] = []
 
-    normalize = getattr(config.training, 'normalize', False)
-
-    get_internal_loss = (args.model_type in (
-        'mel_band_roformer',
-        'bs_roformer',
-        'bs_mamba2',
-        'mel_band_conformer',
-        'bs_conformer'
-    ) and not args.use_standard_loss)
-
     if ddp:
         pbar = tqdm(train_loader,
                     dynamic_ncols=True) if dist.get_rank() == 0 else train_loader
@@ -208,66 +276,32 @@ def train_one_epoch(model: torch.nn.Module, config: ConfigDict, args: argparse.N
         pbar = tqdm(train_loader)
 
     for i, data in enumerate(pbar):
-        if len(data)==3:
-            batch, mixes, active_stem_mask = data
-        elif len(data)==2:
-            batch, mixes = data
-            active_stem_mask = None
-        else:
-            raise ValueError(f'len data is {len(data)}')
-
-        # For SCNet, retain only the union of stems present in this physical
-        # batch before copying targets to the GPU. The boolean mask remains
-        # per-sample, so union-only stems from another sample are ignored.
-        model_active_stem_ids = None
-        if args.model_type == 'scnet' and isinstance(active_stem_mask, torch.Tensor):
-            if active_stem_mask.ndim != 2 or tuple(active_stem_mask.shape) != tuple(batch.shape[:2]):
-                raise ValueError(
-                    "SCNet active_stem_mask must match target [batch, stems], "
-                    f"got {tuple(active_stem_mask.shape)} for target {tuple(batch.shape)}"
-                )
-            active_stem_ids_tensor = torch.nonzero(
-                active_stem_mask.any(dim=0), as_tuple=False
-            ).flatten()
-            if active_stem_ids_tensor.numel() == 0:
-                raise ValueError("active_stem_mask does not contain any active stems")
-            model_active_stem_ids = active_stem_ids_tensor.tolist()
-            batch = batch.index_select(1, active_stem_ids_tensor)
-            active_stem_mask = active_stem_mask.index_select(
-                1, active_stem_ids_tensor
-            )
-
-        x = mixes.to(device)
-        y = batch.to(device)
-        if isinstance(active_stem_mask, torch.Tensor):
-            active_stem_mask = active_stem_mask.to(device=device, dtype=torch.bool)
-
-        if normalize:
-            x, y = normalize_batch(x, y)
         if safe_mode:
             try:
-                with torch.autocast(
-                    device_type=device.type,
-                    enabled=bool(use_amp and device.type == 'cuda'),
-                ):
-                    loss = forward_step(
-                        x, y, active_stem_mask, get_internal_loss, model,
-                        multi_loss, device_ids, args.model_type,
-                        model_active_stem_ids
-                    )
+                loss, active_stem_mask = compute_training_loss(
+                    model,
+                    config,
+                    args,
+                    data,
+                    device,
+                    device_ids,
+                    multi_loss,
+                    use_amp,
+                )
             except Exception as e:
                 print(f'Error: {e}')
                 continue
         else:
-            with torch.autocast(
-                device_type=device.type,
-                enabled=bool(use_amp and device.type == 'cuda'),
-            ):
-                loss = forward_step(
-                    x, y, active_stem_mask, get_internal_loss, model,
-                    multi_loss, device_ids, args.model_type,
-                    model_active_stem_ids
-                )
+            loss, active_stem_mask = compute_training_loss(
+                model,
+                config,
+                args,
+                data,
+                device,
+                device_ids,
+                multi_loss,
+                use_amp,
+            )
         loss /= gradient_accumulation_steps
         scaler.scale(loss).backward()
 
@@ -455,10 +489,17 @@ def train_model(args: Union[argparse.Namespace, None], rank=None, world_size=Non
     from msst.utils.losses import choice_loss
     from msst.utils.model_utils import get_optimizer, log_model_info
 
-    args = parse_args_train(args)
+    args = validate_train_args(parse_args_train(args))
     ddp = True if world_size else False
     if ddp:
-        initialize_environment_ddp(rank, world_size, args.seed, args.results_path)
+        ddp_device_id = args.device_ids[rank]
+        initialize_environment_ddp(
+            rank,
+            world_size,
+            args.seed,
+            args.results_path,
+            device_id=ddp_device_id,
+        )
     else:
         initialize_environment(args.seed, args.results_path)
     model, config = get_model_from_config(
@@ -505,9 +546,13 @@ def train_model(args: Union[argparse.Namespace, None], rank=None, world_size=Non
         print('Frozen layers: {}'.format(len(freeze_layers)))
 
     if ddp:
-        device = torch.device(f'cuda:{rank}')
+        device = torch.device(f'cuda:{ddp_device_id}')
         model.to(device)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank], find_unused_parameters=True)
+        model = torch.nn.parallel.DistributedDataParallel(
+            model,
+            device_ids=[ddp_device_id],
+            find_unused_parameters=True,
+        )
         model_module = model.module
     else:
         device, model = initialize_model_and_device(model, args.device_ids)

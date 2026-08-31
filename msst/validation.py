@@ -6,9 +6,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from os import PathLike
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .errors import optional_dependency_error
+
+if TYPE_CHECKING:
+    from .experiments import Experiment
 
 PathValue = str | PathLike[str]
 DeviceIds = int | Sequence[int]
@@ -215,6 +218,8 @@ def valid(
     lora_checkpoint_peft: PathValue | None = None,
     lora_checkpoint_loralib: PathValue | None = None,
     verbose: bool = False,
+    experiment: PathValue | "Experiment" | None = None,
+    run_name: str | None = None,
 ) -> ValidationResult:
     """Evaluate a checkpoint against one or more validation datasets.
 
@@ -235,6 +240,8 @@ def valid(
         lora_checkpoint_peft: Optional PEFT LoRA checkpoint.
         lora_checkpoint_loralib: Optional loralib checkpoint.
         verbose: Print validation paths, progress, and aggregate metrics.
+        experiment: Optional MSST experiment directory for run tracking.
+        run_name: Optional label included in the tracked run directory.
 
     Returns:
         A :class:`ValidationResult` containing aggregate and per-track scores.
@@ -261,17 +268,40 @@ def valid(
         lora_checkpoint_loralib=lora_checkpoint_loralib,
         verbose=verbose,
     )
-    try:
-        legacy = import_module("._validation", __package__)
-        result = legacy.check_validation(config.to_legacy_args())
-    except ModuleNotFoundError as error:
-        extra = f"validation,{model_type.replace('_', '-')}"
-        raise optional_dependency_error(
-            error,
-            extra=extra,
-            feature="Model validation",
-        ) from error
-    return ValidationResult.from_legacy(result)
+    from .experiments import tracked_run
+
+    parameters = {
+        "config_path": str(config_path),
+        "checkpoint_path": str(checkpoint_path),
+        "valid_path": [str(path) for path in _paths(valid_path)],
+        "output_folder": str(output_folder) if output_folder else None,
+        "model_type": model_type,
+        "device_ids": device_ids,
+        "force_cpu": force_cpu,
+        "metrics": metrics,
+    }
+    with tracked_run(
+        experiment,
+        task="valid",
+        parameters=parameters,
+        run_name=run_name,
+    ) as run:
+        try:
+            legacy = import_module("._validation", __package__)
+            result = legacy.check_validation(config.to_legacy_args())
+        except ModuleNotFoundError as error:
+            extra = f"validation,{model_type.replace('_', '-')}"
+            raise optional_dependency_error(
+                error,
+                extra=extra,
+                feature="Model validation",
+            ) from error
+        normalized = ValidationResult.from_legacy(result)
+        if run is not None:
+            if output_folder is not None:
+                run.add_artifacts(str(output_folder))
+            run.set_result({"averages": normalized.averages})
+        return normalized
 
 
 __all__ = [

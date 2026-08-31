@@ -3,6 +3,8 @@ __author__ = 'Roman Solovyev (ZFTurbo): https://github.com/ZFTurbo/'
 
 
 import os
+import hashlib
+import json
 import random
 import numpy as np
 import torch
@@ -150,19 +152,8 @@ def resolve_track_audio_files(track_path, instruments, file_types, excluded_stem
     return audio_files
 
 
-def prepare_data(config: Union[ConfigDict, OmegaConf], args: argparse.Namespace, batch_size: int) -> DataLoader:
-    """
-    Build the training DataLoader. If torch.distributed.is_initialized() is True,
-    construct a DDP DataLoader with DistributedSampler; otherwise, construct a regular DataLoader.
-
-    Args:
-        config: Dataset configuration passed to MSSDataset.
-        args: Must provide data_path, results_path, dataset_type, and DataLoader settings.
-        batch_size: Per-process mini-batch size.
-
-    Returns:
-        Configured DataLoader for the training split.
-    """
+def _training_collate_fn(config, dataset_type):
+    """Return the collator selected by the training configuration."""
 
     actionable_collate = None
     if 'augmentations' in config:
@@ -179,30 +170,91 @@ def prepare_data(config: Union[ConfigDict, OmegaConf], args: argparse.Namespace,
                                     print('Warning: you need to increase config.audio.chunk_size from {} up to: {}'.format(
                                         config['audio']['chunk_size'], max_size
                                     ))
-                            except:
+                            except Exception:
                                 pass
                             actionable_collate = partial(music_collate_fn, min_size=min_size, max_size=max_size)
 
-    if args.dataset_type == 7 and actionable_collate is None:
+    if dataset_type == 7 and actionable_collate is None:
         actionable_collate = class_balanced_collate_fn
+    return actionable_collate
+
+
+def prepare_training_dataset(
+    config: Union[ConfigDict, OmegaConf],
+    args: argparse.Namespace,
+    batch_size: int,
+    *,
+    refresh_metadata: bool = False,
+):
+    """Build the dataset using the same explicit metadata service as the API.
+
+    In DDP mode only rank zero writes metadata; the remaining ranks wait and
+    then read that file. This avoids concurrent writes to the same pickle.
+    """
+
+    metadata_path = os.path.join(
+        args.results_path, f"metadata_{args.dataset_type}.pkl"
+    )
+    dataset_batch_size = batch_size
+    if dist.is_initialized() and args.dataset_type != 5:
+        dataset_batch_size *= dist.get_world_size()
+
+    if dist.is_initialized():
+        if dist.get_rank() == 0:
+            metadata = MSSDataset.collect_metadata(
+                config,
+                args.data_path,
+                metadata_path=metadata_path,
+                dataset_type=args.dataset_type,
+                verbose=True,
+                reuse=not refresh_metadata,
+            )
+        else:
+            metadata = None
+        dist.barrier()
+        if dist.get_rank() != 0:
+            metadata = MSSDataset.load_metadata(metadata_path)
+    else:
+        metadata = MSSDataset.collect_metadata(
+            config,
+            args.data_path,
+            metadata_path=metadata_path,
+            dataset_type=args.dataset_type,
+            verbose=True,
+            reuse=not refresh_metadata,
+        )
+
+    return MSSDataset(
+        config,
+        args.data_path,
+        batch_size=dataset_batch_size,
+        metadata_path=metadata_path,
+        dataset_type=args.dataset_type,
+        metadata=metadata,
+    )
+
+
+def prepare_data(config: Union[ConfigDict, OmegaConf], args: argparse.Namespace, batch_size: int) -> DataLoader:
+    """
+    Build the training DataLoader. If torch.distributed.is_initialized() is True,
+    construct a DDP DataLoader with DistributedSampler; otherwise, construct a regular DataLoader.
+
+    Args:
+        config: Dataset configuration passed to MSSDataset.
+        args: Must provide data_path, results_path, dataset_type, and DataLoader settings.
+        batch_size: Per-process mini-batch size.
+
+    Returns:
+        Configured DataLoader for the training split.
+    """
+
+    actionable_collate = _training_collate_fn(config, args.dataset_type)
+    trainset = prepare_training_dataset(config, args, batch_size)
 
     # DDP
     if dist.is_initialized():
         rank = dist.get_rank()
         world_size = dist.get_world_size()
-
-        if args.dataset_type != 5:
-            ddp_batch = batch_size * world_size # maintain "num_steps" semantics across the whole world
-        else:
-            ddp_batch = batch_size
-
-        trainset = MSSDataset(
-            config,
-            args.data_path,
-            batch_size=ddp_batch,
-            metadata_path=os.path.join(args.results_path, f"metadata_{args.dataset_type}.pkl"),
-            dataset_type=args.dataset_type,
-        )
 
         sampler = DistributedSampler(
             trainset,
@@ -223,14 +275,6 @@ def prepare_data(config: Union[ConfigDict, OmegaConf], args: argparse.Namespace,
             collate_fn=actionable_collate,
         )
     else:
-        trainset = MSSDataset(
-            config,
-            args.data_path,
-            batch_size=batch_size,
-            metadata_path=os.path.join(args.results_path, f"metadata_{args.dataset_type}.pkl"),
-            dataset_type=args.dataset_type,
-        )
-
         train_loader = DataLoader(
             trainset,
             batch_size=batch_size,
@@ -391,7 +435,36 @@ def process_chunk_worker(args):
 
 
 class MSSDataset(torch.utils.data.Dataset):
-    def __init__(self, config, data_path, metadata_path="metadata.pkl", dataset_type=1, batch_size=None, verbose=True):
+    def __init__(
+        self,
+        config,
+        data_path,
+        metadata_path="metadata.pkl",
+        dataset_type=1,
+        batch_size=None,
+        verbose=True,
+        metadata=None,
+    ):
+        self._initialize_metadata_context(
+            config,
+            data_path,
+            metadata_path=metadata_path,
+            dataset_type=dataset_type,
+            batch_size=batch_size,
+            verbose=verbose,
+        )
+        self._initialize_training_runtime(metadata)
+
+    def _initialize_metadata_context(
+        self,
+        config,
+        data_path,
+        *,
+        metadata_path,
+        dataset_type,
+        batch_size,
+        verbose,
+    ):
         self.verbose = verbose
         self.config = config
         self.dataset_type = dataset_type  # 1, 2, 3, 4 or 5
@@ -421,6 +494,9 @@ class MSSDataset(torch.utils.data.Dataset):
         if self.dataset_type == 8:
             self._initialize_reverb_training()
 
+    def _initialize_training_runtime(self, metadata):
+        config = self.config
+
         should_print = (not dist.is_initialized() or dist.get_rank() == 0)
 
         # Augmentation block
@@ -434,20 +510,27 @@ class MSSDataset(torch.utils.data.Dataset):
             if self.verbose and should_print:
                 print('There is no augmentations block in config. Augmentations disabled for training...')
 
-        metadata = self.get_metadata()
+        if metadata is None:
+            metadata = self.get_metadata()
 
         if self.dataset_type in [1, 4, 5, 6, 7, 8]:
             if len(metadata) > 0:
                 if self.verbose and should_print:
                     print('Found tracks in dataset: {}'.format(len(metadata)))
             else:
-                if should_print:
-                    print('No tracks found for training. Check paths you provided!')
-                exit()
+                raise ValueError(
+                    'No tracks found for training. Check the configured data paths '
+                    'and required stem names.'
+                )
         else:
             for instr in self.instruments:
                 if self.verbose and should_print:
                     print('Found tracks for {} in dataset: {}'.format(instr, len(metadata[instr])))
+                if not metadata[instr]:
+                    raise ValueError(
+                        f"No tracks found for instrument '{instr}'. Check the "
+                        'configured data paths and file extensions.'
+                    )
         self.metadata = metadata
         if isinstance(self.metadata, list):
             self.track_lengths_dict = {path: length for path, length in self.metadata}
@@ -461,6 +544,96 @@ class MSSDataset(torch.utils.data.Dataset):
              self._initialize_chunks_metadata()
         if self.dataset_type == 7:
             self._build_class_to_tracks()
+
+    @classmethod
+    def collect_metadata(
+        cls,
+        config,
+        data_path,
+        *,
+        metadata_path="metadata.pkl",
+        dataset_type=1,
+        verbose=True,
+        reuse=True,
+    ):
+        """Collect and persist metadata without constructing a DataLoader."""
+
+        collector = cls.__new__(cls)
+        collector._initialize_metadata_context(
+            config,
+            data_path,
+            metadata_path=metadata_path,
+            dataset_type=dataset_type,
+            batch_size=None,
+            verbose=verbose,
+        )
+        signature = collector._metadata_cache_signature()
+        manifest_path = os.path.splitext(os.path.abspath(metadata_path))[0] + '.json'
+        if reuse and os.path.isfile(metadata_path):
+            try:
+                with open(manifest_path, 'r', encoding='utf-8') as manifest_file:
+                    manifest = json.load(manifest_file)
+                reuse = manifest.get('metadata_signature') == signature
+                if not reuse and verbose:
+                    print('Metadata configuration changed; rebuilding the cache.')
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                reuse = False
+                if verbose:
+                    print('Metadata manifest is missing or invalid; rebuilding the cache.')
+
+        metadata = collector.get_metadata(reuse=reuse)
+        manifest = {
+            'schema_version': 1,
+            'metadata_signature': signature,
+            'dataset_type': int(dataset_type),
+            'data_paths': [
+                os.path.realpath(path) for path in as_list(data_path)
+            ],
+        }
+        temporary_manifest = manifest_path + '.tmp'
+        with open(temporary_manifest, 'w', encoding='utf-8') as manifest_file:
+            json.dump(manifest, manifest_file, ensure_ascii=False, indent=2)
+            manifest_file.write('\n')
+        os.replace(temporary_manifest, manifest_path)
+        return metadata
+
+    def _metadata_cache_signature(self):
+        payload = {
+            'dataset_type': int(self.dataset_type),
+            'data_paths': sorted(
+                os.path.realpath(path) for path in as_list(self.data_path)
+            ),
+            'instruments': list(map(str, self.instruments)),
+            'file_types': list(map(str, self.file_types)),
+            'single_target_from_mixture': self.single_target_from_mixture,
+            'target_instrument': str(
+                cfg_get(self.config.training, 'target_instrument', '')
+            ),
+        }
+        if self.dataset_type == 8:
+            payload.update({
+                'reverb_auto_sources': self.reverb_auto_sources,
+                'reverb_source_instruments': list(
+                    map(str, self.reverb_source_instruments)
+                ),
+                'reverb_excluded_instruments': sorted(
+                    map(str, self.reverb_excluded_instruments)
+                ),
+            })
+        serialized = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+        return hashlib.sha256(serialized).hexdigest()
+
+    @staticmethod
+    def load_metadata(metadata_path):
+        """Read metadata produced by :meth:`collect_metadata`."""
+
+        with open(metadata_path, 'rb') as metadata_file:
+            return pickle.load(metadata_file)
 
     def _initialize_reverb_training(self):
         self.reverb_config = cfg_get(self.config, 'reverb', {})
@@ -1037,13 +1210,19 @@ class MSSDataset(torch.utils.data.Dataset):
             return False
 
 
-    def read_from_metadata_cache(self, track_paths, instr=None):
+    def read_from_metadata_cache(self, track_paths, instr=None, reuse=True):
         should_print = (not dist.is_initialized() or dist.get_rank() == 0)
         metadata = []
-        if os.path.isfile(self.metadata_path):
+        if reuse and os.path.isfile(self.metadata_path):
             if self.verbose and should_print:
                 print('Found metadata cache file: {}'.format(self.metadata_path))
-            old_metadata = pickle.load(open(self.metadata_path, 'rb'))
+            try:
+                with open(self.metadata_path, 'rb') as metadata_file:
+                    old_metadata = pickle.load(metadata_file)
+            except (EOFError, OSError, pickle.UnpicklingError, TypeError):
+                if self.verbose and should_print:
+                    print('Metadata cache is unreadable; rebuilding it.')
+                return track_paths, metadata
         else:
             return track_paths, metadata
 
@@ -1062,8 +1241,8 @@ class MSSDataset(torch.utils.data.Dataset):
         return track_paths, metadata
 
 
-    def get_metadata(self):
-        read_metadata_procs = multiprocessing.cpu_count() - 2
+    def get_metadata(self, reuse=True):
+        read_metadata_procs = max(1, multiprocessing.cpu_count() - 2)
         should_print = not dist.is_initialized() or dist.get_rank() == 0
         if 'read_metadata_procs' in self.config['training']:
             read_metadata_procs = int(self.config['training']['read_metadata_procs'])
@@ -1088,7 +1267,9 @@ class MSSDataset(torch.utils.data.Dataset):
                 track_paths += sorted(glob(self.data_path + '/*'))
 
             track_paths = [path for path in track_paths if os.path.basename(path)[0] != '.' and os.path.isdir(path)]
-            track_paths, metadata = self.read_from_metadata_cache(track_paths, None)
+            track_paths, metadata = self.read_from_metadata_cache(
+                track_paths, None, reuse=reuse
+            )
 
             if read_metadata_procs <= 1:
                 pbar = tqdm(track_paths) if should_print else track_paths
@@ -1150,7 +1331,9 @@ class MSSDataset(torch.utils.data.Dataset):
                     track_paths += sorted(glob(self.data_path + '/{}/*.wav'.format(instr)))
                     track_paths += sorted(glob(self.data_path + '/{}/*.flac'.format(instr)))
 
-                track_paths, metadata[instr] = self.read_from_metadata_cache(track_paths, instr)
+                track_paths, metadata[instr] = self.read_from_metadata_cache(
+                    track_paths, instr, reuse=reuse
+                )
 
                 if read_metadata_procs <= 1:
                     pbar = tqdm(track_paths) if should_print else track_paths
@@ -1169,14 +1352,12 @@ class MSSDataset(torch.utils.data.Dataset):
 
         elif self.dataset_type == 3:
             import pandas as pd
-            if type(self.data_path) != list:
-                data_path = [self.data_path]
-
-            metadata = dict()
-            for i in range(len(self.data_path)):
+            data_paths = as_list(self.data_path)
+            metadata = {instr: [] for instr in self.instruments}
+            for csv_path in data_paths:
                 if self.verbose and should_print:
-                    print('Reading tracks from: {}'.format(self.data_path[i]))
-                df = pd.read_csv(self.data_path[i])
+                    print('Reading tracks from: {}'.format(csv_path))
+                df = pd.read_csv(csv_path)
 
                 skipped = 0
                 for instr in self.instruments:
@@ -1185,9 +1366,10 @@ class MSSDataset(torch.utils.data.Dataset):
                         print('Tracks found for {}: {}'.format(instr, len(part)))
                 for instr in self.instruments:
                     part = df[df['instrum'] == instr].copy()
-                    metadata[instr] = []
                     track_paths = list(part['path'].values)
-                    track_paths, metadata[instr] = self.read_from_metadata_cache(track_paths, instr)
+                    track_paths, instrument_metadata = self.read_from_metadata_cache(
+                        track_paths, instr, reuse=reuse
+                    )
 
                     pbar = tqdm(track_paths) if should_print else track_paths
                     for path in pbar:
@@ -1204,17 +1386,24 @@ class MSSDataset(torch.utils.data.Dataset):
                                 print('Problem with path: {}'.format(path))
                             skipped += 1
                             continue
-                        metadata[instr].append((path, length))
+                        instrument_metadata.append((path, length))
+                    metadata[instr].extend(instrument_metadata)
                 if skipped > 0 and should_print:
                     print('Missing tracks: {} from {}'.format(skipped, len(df)))
         else:
-            if should_print:
-                print('Unknown dataset type: {}. Must be 1, 2, 3, 4, 5, 6, 7 or 8'.format(self.dataset_type))
-            exit()
+            raise ValueError(
+                'Unknown dataset type: {}. Must be 1, 2, 3, 4, 5, 6, 7 or 8'.format(
+                    self.dataset_type
+                )
+            )
 
         # Save metadata
-        with open(self.metadata_path, 'wb') as metadata_file:
+        metadata_parent = os.path.dirname(os.path.abspath(self.metadata_path))
+        os.makedirs(metadata_parent, exist_ok=True)
+        temporary_metadata = self.metadata_path + '.tmp'
+        with open(temporary_metadata, 'wb') as metadata_file:
             pickle.dump(metadata, metadata_file)
+        os.replace(temporary_metadata, self.metadata_path)
         return metadata
 
 

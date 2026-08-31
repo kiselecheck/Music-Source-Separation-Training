@@ -10,9 +10,12 @@ from importlib import import_module
 from os import PathLike
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .errors import AudioFileError, OutputFormatError, optional_dependency_error
+
+if TYPE_CHECKING:
+    from .experiments import Experiment
 
 PathValue = str | PathLike[str]
 DeviceIds = int | str | Sequence[int]
@@ -418,31 +421,61 @@ def inference(
     lora_checkpoint_peft: PathValue | None = None,
     lora_checkpoint_loralib: PathValue | None = None,
     skip_errors: bool = False,
+    experiment: PathValue | "Experiment" | None = None,
+    run_name: str | None = None,
 ) -> list[str]:
-    """Load a separator once, process a folder, and release the model."""
+    """Load a separator once, process a folder, and release the model.
 
-    with Separator(
-        config_path=config_path,
-        checkpoint_path=checkpoint_path,
-        model_type=model_type,
-        device_ids=device_ids,
-        force_cpu=force_cpu,
-        use_tta=use_tta,
-        bigshifts=bigshifts,
-        extract_instrumental=extract_instrumental,
-        detailed_progress=not disable_detailed_pbar,
-        lora_checkpoint_peft=lora_checkpoint_peft,
-        lora_checkpoint_loralib=lora_checkpoint_loralib,
-    ) as separator:
-        return separator.separate_folder(
-            input_folder,
-            output_folder,
-            draw_spectro=draw_spectro,
-            flac_file=flac_file,
-            pcm_type=pcm_type,
-            filename_template=filename_template,
-            skip_errors=skip_errors,
-        )
+    Set ``experiment`` to an MSST experiment directory to record inputs,
+    environment, status, and generated files without changing where outputs
+    are written.
+    """
+
+    from .experiments import tracked_run
+
+    parameters = {
+        "config_path": str(config_path),
+        "checkpoint_path": str(checkpoint_path),
+        "input_folder": str(input_folder),
+        "output_folder": str(output_folder),
+        "model_type": model_type,
+        "device_ids": device_ids,
+        "force_cpu": force_cpu,
+        "use_tta": use_tta,
+        "bigshifts": bigshifts,
+    }
+    with tracked_run(
+        experiment,
+        task="inference",
+        parameters=parameters,
+        run_name=run_name,
+    ) as run:
+        with Separator(
+            config_path=config_path,
+            checkpoint_path=checkpoint_path,
+            model_type=model_type,
+            device_ids=device_ids,
+            force_cpu=force_cpu,
+            use_tta=use_tta,
+            bigshifts=bigshifts,
+            extract_instrumental=extract_instrumental,
+            detailed_progress=not disable_detailed_pbar,
+            lora_checkpoint_peft=lora_checkpoint_peft,
+            lora_checkpoint_loralib=lora_checkpoint_loralib,
+        ) as separator:
+            outputs = separator.separate_folder(
+                input_folder,
+                output_folder,
+                draw_spectro=draw_spectro,
+                flac_file=flac_file,
+                pcm_type=pcm_type,
+                filename_template=filename_template,
+                skip_errors=skip_errors,
+            )
+        if run is not None:
+            run.add_artifacts(outputs)
+            run.set_result({"output_count": len(outputs)})
+        return outputs
 
 
 def proc_folder(
