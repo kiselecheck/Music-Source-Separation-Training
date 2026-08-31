@@ -339,14 +339,13 @@ msst.train(..., experiment=experiment, run_name="baseline")
 ```
 
 The initializer creates `configs/`, `checkpoints/`, `jobs/`, `logs/`,
-`results/`, and `runs/` plus `experiment.yaml`. It creates no Slurm or other
-scheduler configuration. The same experiment works locally and in a scheduled
-job.
+`results/`, and `runs/` plus `experiment.yaml`. It does not create execution
+scripts or environment-specific configuration.
 
 Tracking is opt-in. Each call to `train`, `valid`, or `inference` with an
 `experiment` creates `runs/<timestamp>-<task>-<id>/run.json`, snapshots the
 config, hashes config/checkpoint inputs, records Python/PyTorch/CUDA/GPU and
-available Slurm environment fields, and marks the run completed or failed.
+platform details, and marks the run completed or failed.
 The caller still chooses every data, results, and log path.
 
 ## Typing and errors

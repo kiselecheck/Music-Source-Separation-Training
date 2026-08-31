@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import platform
 import re
 import shutil
-import socket
-import sys
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -72,10 +69,10 @@ class Experiment:
 
 
 def init_experiment(path: PathValue, *, name: str | None = None) -> Experiment:
-    """Create a cluster-neutral experiment layout.
+    """Create a portable experiment layout.
 
-    No scheduler-specific scripts are generated. The empty ``jobs`` directory
-    can hold local scripts, Slurm jobs, or another scheduler's files.
+    No execution scripts are generated. The empty ``jobs`` directory can hold
+    any user-owned launch scripts.
     """
 
     root = Path(path).expanduser().resolve()
@@ -164,16 +161,7 @@ class ExperimentRun:
             "msst": __version__,
             "python": platform.python_version(),
             "platform": platform.platform(),
-            "hostname": socket.gethostname(),
-            "executable": sys.executable,
         }
-        slurm = {
-            key: value
-            for key, value in os.environ.items()
-            if key.startswith("SLURM_")
-        }
-        if slurm:
-            environment["slurm"] = slurm
         try:
             import torch
 

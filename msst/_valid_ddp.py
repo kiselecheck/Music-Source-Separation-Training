@@ -1,7 +1,4 @@
 # coding: utf-8
-__author__ = 'Ilya Kiselev (kiselecheck): https://github.com/kiselecheck'
-__version__ = '1.0.1'
-
 
 import torch
 from msst.utils.model_utils import load_start_checkpoint

@@ -15,10 +15,9 @@ matching Torch release.
 
 CUDA binaries are not bundled by MSST. On a GPU system, install the wheel from
 the appropriate [PyTorch package index](https://pytorch.org/get-started/locally/)
-before installing MSST so pip keeps the hardware-compatible build. A Tesla V100
-(compute capability 7.0) has been validated with matching `torch==2.11.0` and
-`torchaudio==2.11.0` CUDA 12.6 wheels. Do not assume that the newest CUDA wheel
-still includes kernels for older GPU architectures.
+before installing MSST so pip keeps the hardware-compatible build. Verify that
+the selected wheel includes kernels for the target GPU architecture; the newest
+CUDA wheel does not necessarily support every older architecture.
 
 Triton, Torch-TensorRT, and TorchAO are not MSST runtime dependencies.
 

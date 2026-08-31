@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 import torch
+import yaml
 
 import msst
 import msst.training as training_module
@@ -38,7 +39,8 @@ def test_init_experiment_creates_portable_layout(tmp_path):
     assert experiment.manifest_path.is_file()
     assert all((experiment.path / name).is_dir() for name in EXPERIMENT_DIRECTORIES)
     assert list((experiment.path / "jobs").iterdir()) == []
-    assert "slurm" not in experiment.manifest_path.read_text(encoding="utf-8").lower()
+    manifest = yaml.safe_load(experiment.manifest_path.read_text(encoding="utf-8"))
+    assert set(manifest) == {"schema_version", "name", "created_at", "paths"}
 
     with pytest.raises(FileExistsError, match="already exists"):
         msst.init_experiment(experiment.path)

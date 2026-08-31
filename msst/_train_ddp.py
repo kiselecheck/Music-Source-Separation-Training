@@ -1,5 +1,4 @@
 # coding: utf-8
-__author__ = 'Ilya Kiselev (kiselecheck): https://github.com/kiselecheck'
 
 import contextlib
 import os

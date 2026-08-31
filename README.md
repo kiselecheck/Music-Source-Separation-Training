@@ -130,7 +130,7 @@ msst train --launcher accelerate ...   # Hugging Face Accelerate runtime
 ```
 
 All three launchers accept the same training CLI. In DDP mode rank 0 owns the
-main console/Slurm output; output from other ranks is retained under
+main console output; output from other ranks is retained under
 `RESULTS/ddp_logs/` instead of being repeated in the main log.
 
 Before a long job, run either the non-forward check or one real train-step:
@@ -150,7 +150,7 @@ not a mathematical guarantee for every random augmentation.
 
 ## Portable experiments
 
-`msst init experiments/dereverb-v5` creates only scheduler-neutral structure:
+`msst init experiments/dereverb-v5` creates a portable structure:
 
 ```text
 dereverb-v5/
@@ -163,8 +163,8 @@ dereverb-v5/
 └── runs/
 ```
 
-The `jobs/` directory is intentionally empty: local scripts, Slurm `.sh`
-files, or jobs for another scheduler remain user-owned. Pass
+The `jobs/` directory is intentionally empty so launch scripts remain
+user-owned. Pass
 `experiment="experiments/dereverb-v5"` to `msst.train`, `msst.valid`, or
 `msst.inference` to create a run record containing arguments, environment,
 config snapshot, input hashes, status, and artifacts. Output paths are not
@@ -268,8 +268,8 @@ all options. Validation dataset layouts are described in
 
 ## Useful notes
 
-* Example configs are sized for one NVIDIA A6000 with 48 GB of VRAM. For a
-  smaller GPU, adjust `training.batch_size` and
+* Example configs may need adjustment for the available VRAM. Change
+  `training.batch_size` and
   `training.gradient_accumulation_steps` in the model config.
 * Starting from compatible weights can shorten training even when every tensor
   shape does not match. The architecture itself must remain compatible.
