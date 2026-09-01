@@ -15,7 +15,6 @@ artifacts: they are passed as paths and are not embedded in the wheel.
 - [Training](#training)
 - [Experiments and run tracking](#experiments-and-run-tracking)
 - [Typing and errors](#typing-and-errors)
-- [Backward compatibility](#backward-compatibility)
 
 ## Installation
 
@@ -36,17 +35,19 @@ Other common extras are `mel_band_roformer`, `scnet_unofficial`, `gui`,
 
 | Task | Public Python API | Return value | CLI |
 | --- | --- | --- | --- |
-| Separate one folder | `msst.inference(...)` | `list[str]` of written files | `msst-inference` |
+| Separate one folder | `msst.inference(...)` | `list[str]` of written files | `msst inference` |
 | Reuse one loaded model | `msst.Separator(...)` | `dict[str, numpy.ndarray]` per input | — |
-| Evaluate a checkpoint | `msst.valid(...)` | `msst.ValidationResult` | `msst-valid` |
-| Train or fine-tune | `msst.train(...)` | `None`; artifacts are written to disk | `msst-train` |
+| Evaluate a checkpoint | `msst.valid(...)` | `msst.ValidationResult` | `msst valid` |
+| Train or fine-tune | `msst.train(...)` | `None`; artifacts are written to disk | `msst train` |
 | Build training metadata | `msst.build_metadata(...)` | `msst.MetadataResult` | `msst metadata` |
 | Check a training run | `msst.check(...)` | `msst.CheckReport` | `msst check` |
 | Initialize experiment | `msst.init_experiment(...)` | `msst.Experiment` | `msst init` |
 
-All public functions use keyword-only arguments. Paths accept `str` or
+Workflow functions use keyword-only arguments. Experiment initialization and
+loading accept their path positionally. Paths accept `str` or
 `os.PathLike[str]`, including `pathlib.Path`. Run any command with `--help` for
-the corresponding command-line contract.
+the corresponding command-line contract; see the [CLI guide](cli.md) for
+complete examples.
 
 ## Inference
 
@@ -191,9 +192,8 @@ arguments before a run.
 
 ## Dataset metadata
 
-`build_metadata` is the one metadata scanner used by the API, CLI,
-`scripts/do_metadata.py`, and normal training. It does not construct a
-DataLoader merely to trigger a side effect.
+`build_metadata` is the metadata scanner used by the API, CLI, and training.
+It scans the dataset directly and does not construct a DataLoader.
 
 ```python
 result = msst.build_metadata(
@@ -220,8 +220,8 @@ print(result.path, result.track_count, result.fingerprint)
 | `verbose` | `bool = True` | Print scan progress. |
 
 The adjacent JSON manifest records config hash, resolved roots, entry count,
-MSST version, and metadata fingerprint. Pickle remains the runtime cache format
-for compatibility.
+MSST version, and metadata fingerprint. The training runtime consumes the
+pickle cache.
 
 ## Preflight checks
 
@@ -292,7 +292,7 @@ msst.train(
 | `launcher` | `"standard" \| "ddp" \| "accelerate"` | Runtime; default is `standard`. |
 | `experiment` | path, `Experiment`, or `None` | Optional run tracking. |
 | `run_name` | `str` or `None` | Optional tracked run label. |
-| `**options` | typed scalar/sequence values | Additional names listed below and by `msst-train --help`. |
+| `**options` | typed scalar/sequence values | Additional names listed below and by `msst train --help`. |
 
 Accepted `**options` use the same names as the CLI:
 
@@ -307,7 +307,7 @@ Accepted `**options` use the same names as the CLI:
 | Runtime | `set_per_process_memory_fraction` |
 
 Exact defaults, choices, and CLI descriptions are available from
-`msst-train --help`; architecture, optimizer, schedule, batch size, segment
+`msst train --help`; architecture, optimizer, schedule, batch size, segment
 length, and epoch settings remain in the YAML config. `train` returns `None`.
 
 The equivalent unified commands are:
@@ -318,9 +318,8 @@ msst train --launcher ddp ...
 msst train --launcher accelerate ...
 ```
 
-`msst-train`, `msst-train-ddp`, and `msst-train-accelerate` remain direct
-aliases. DDP sends rank-zero output to the main console and preserves other
-rank output in `results_path/ddp_logs/rank_<N>.log`.
+DDP sends rank-zero output to the main console and preserves other rank output
+in `results_path/ddp_logs/rank_<N>.log`.
 
 The DDP launcher spawns one process per requested `device_ids` entry.
 Accelerate process creation remains owned by `accelerate launch`; selecting
@@ -335,7 +334,17 @@ and checkpoints have versions independent of the Python distribution; see
 
 ```python
 experiment = msst.init_experiment("experiments/dereverb-v5")
-msst.train(..., experiment=experiment, run_name="baseline")
+
+msst.train(
+    model_type="bs_roformer",
+    config_path="configs/model.yaml",
+    data_path="datasets/train",
+    valid_path="datasets/valid",
+    results_path="results/training",
+    device_ids=(0,),
+    experiment=experiment,
+    run_name="baseline",
+)
 ```
 
 The initializer creates `configs/`, `checkpoints/`, `jobs/`, `logs/`,
@@ -347,6 +356,9 @@ Tracking is opt-in. Each call to `train`, `valid`, or `inference` with an
 config, hashes config/checkpoint inputs, records Python/PyTorch/CUDA/GPU and
 platform details, and marks the run completed or failed.
 The caller still chooses every data, results, and log path.
+
+See [Experiments and run tracking](experiments.md) for the manifest schema,
+run-record fields, lifecycle behavior, and recommended layout.
 
 ## Typing and errors
 
@@ -368,11 +380,3 @@ Public package errors inherit from `msst.MSSTError`:
 
 Missing paths and invalid array arguments use standard `FileNotFoundError`,
 `NotADirectoryError`, `TypeError`, and `ValueError` where appropriate.
-
-## Backward compatibility
-
-Historical dictionary calls remain available through
-`msst.inference.proc_folder(...)` and `msst.training.train_model(...)`.
-Repository commands such as `python inference.py`, `python valid.py`, and
-`python train.py` are compatibility wrappers around the packaged runtime. New
-integrations should use the public API and installed commands documented above.
