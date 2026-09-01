@@ -33,6 +33,19 @@ pip install "msst[train,mel_band_roformer]"
 Python package extras normalize hyphens and underscores, so both
 `mel_band_roformer` and `mel-band-roformer` are accepted by pip.
 
+Install dependencies for all generally available model families with:
+
+```bash
+pip install "msst[all-models]"
+```
+
+`all-models` excludes dependencies restricted to a narrow platform. These stay
+in the extra for their architecture, which prevents one unavailable model from
+blocking installation of the others. In particular, BSMamba2 requires
+`msst[bs_mamba2]` on a supported system. Pip treats one installation command as
+a single transaction and cannot otherwise skip an arbitrary dependency that
+fails to install.
+
 | `model_type` | pip extra | Notes |
 | --- | --- | --- |
 | `apollo` | `apollo` |  |

@@ -61,6 +61,31 @@ train = [
 test = ["mypy>=1.11", "pytest>=8"]
 validation = ["auraloss", "torch-l1-snr>=0.1.2", "torch-log-wmse>=0.3.1"]
 # models
+all-models = [
+  "asteroid",
+  "beartype",
+  "conformer",
+  "demucs",
+  "einops",
+  "fire",
+  "hyper-connections",
+  "moises-light",
+  "openunmix",
+  "packaging",
+  "pedalboard",
+  "PoPE-pytorch",
+  "pyloudnorm",
+  "pytorch-lightning",
+  "rotary-embedding-torch",
+  "segmentation-models-pytorch",
+  "spafe",
+  "timm",
+  "torch-audiomentations",
+  "torchaudio>=2.0.1,<2.12",
+  "torchmetrics",
+  "torchseg",
+  "transformers",
+]
 apollo = ["pytorch-lightning"]
 bandit = [
   "fire",

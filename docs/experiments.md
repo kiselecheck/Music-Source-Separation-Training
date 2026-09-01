@@ -261,10 +261,12 @@ The experiment must already exist. Create it once with `msst init`.
 - Copy or move the complete experiment directory when transferring it; the
   manifest's standard paths are relative to its root.
 
-## Tracking without changing execution
+## Using the same experiment from different workflows
 
-Experiment tracking does not select devices, reserve resources, start
-processes, redirect standard output, or retry failures. It records a workflow
-that the caller launches through Python, the MSST CLI, or another process
-manager. This separation keeps experiments usable in different execution
-environments.
+An experiment directory can be used from a Python script, a notebook, the MSST
+command-line interface, or another process runner. In every case, pass the same
+experiment path and choose the operation's config, checkpoint, dataset, log,
+and result paths normally.
+
+This makes `experiment.yaml` and the records under `runs/` a common history for
+the project, while each workflow remains free to choose how and where it runs.

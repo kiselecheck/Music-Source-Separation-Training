@@ -32,14 +32,45 @@ packaging tools:
 python -m pip install --upgrade pip
 ```
 
-On a CUDA system, install the appropriate PyTorch build first. Then install
-MSST with the model extra:
+On a CUDA system, install the appropriate PyTorch build first. MSST then adds
+the model and workflow code around that PyTorch installation.
+
+Different model families require different third-party libraries. MSST keeps
+them in optional **model extras**, so installing one architecture does not pull
+in dependencies for every other architecture. The extra normally has the same
+name as `model_type`. For example, to use `model_type="bs_roformer"`, install:
 
 ```bash
 python -m pip install "msst[bs_roformer]"
 ```
 
-Add workflow extras when required:
+The complete mapping from model types to extras is available in
+[Model extras](compatibility.md#model-extras). Multiple model extras can be
+installed together:
+
+```bash
+python -m pip install "msst[bs_roformer,mel_band_roformer,htdemucs]"
+```
+
+To install the dependencies for all supported model families, use:
+
+```bash
+python -m pip install "msst[all-models]"
+```
+
+`all-models` can be useful for a shared model-testing environment, but it is a
+large installation. Dependencies restricted to a narrow platform are not part
+of this aggregate extra; they remain in the extra for their architecture. This
+allows the generally available models to install even when a specialized model
+cannot. For example, BSMamba2 is enabled separately with
+`python -m pip install "msst[bs_mamba2]"` on a supported system.
+
+Pip cannot ignore an arbitrary failed dependency inside one installation
+transaction. Keeping specialized architectures in separate extras provides a
+predictable environment and makes failures local to the requested model.
+
+Training and validation have their own workflow extras. Combine a workflow
+extra with the selected model extra:
 
 ```bash
 python -m pip install "msst[validation,bs_roformer]"
@@ -110,12 +141,27 @@ Run it:
 python run_inference.py
 ```
 
+The same operation can be launched directly from the console:
+
+```bash
+msst inference \
+  --model_type bs_roformer \
+  --config_path configs/model.yaml \
+  --start_check_point checkpoints/model.ckpt \
+  --input_folder audio/input \
+  --store_dir results/separated \
+  --device_ids 0
+```
+
 For one folder, `msst.inference()` is sufficient. For a notebook, service, or
 pipeline that processes multiple inputs over time, construct one
 `msst.Separator` and reuse it so the checkpoint is loaded only once.
 
 Set `force_cpu=True` to run inference on CPU. CPU execution is useful for
 functional checks but may be slow for large models.
+
+See [MSST command-line interface](cli.md#inference) for output format,
+filename, error-handling, and tracking options.
 
 ## Validate a checkpoint
 
@@ -139,10 +185,25 @@ result = msst.valid(
 print(result.averages)
 ```
 
+Console equivalent:
+
+```bash
+msst valid \
+  --model_type bs_roformer \
+  --config_path configs/model.yaml \
+  --start_check_point checkpoints/model.ckpt \
+  --valid_path datasets/test \
+  --metrics sdr k_sdr \
+  --store_dir results/validation \
+  --device_ids 0 \
+  --verbose
+```
+
 `result.averages` contains aggregate metrics. `result.per_track` retains the
 individual scores grouped by metric and instrument. Validation dataset naming
 and directory rules are documented in
-[Dataset types](dataset_types.md#dataset-for-validation).
+[Dataset types](dataset_types.md#dataset-for-validation). More validation CLI
+options are listed in [MSST command-line interface](cli.md#validation).
 
 ## Prepare training metadata
 
@@ -166,9 +227,29 @@ print(metadata.track_count)
 print(metadata.fingerprint)
 ```
 
+Console equivalent:
+
+```bash
+msst metadata \
+  --model_type bs_roformer \
+  --config_path configs/model.yaml \
+  --data_path datasets/train \
+  --results_path results/training \
+  --dataset_type 1 \
+  --num_workers 8
+```
+
 The result directory receives `metadata_<dataset_type>.pkl` and an adjacent
 JSON manifest. Reuse is automatic when the cache signature still matches the
 dataset and config. Set `refresh=True` to scan again.
+
+Generating metadata in advance is optional. `msst.train()` creates or reuses
+the same cache when training starts. A separate metadata step is useful because
+metadata generation is CPU-only and does not require a GPU. Dataset scanning
+and cache validation can finish ahead of time, leaving the training process to
+start model work immediately instead of spending GPU time on metadata. It also
+isolates missing tracks, invalid layouts, and audio decoding errors from the
+training run.
 
 ## Check the training setup
 
@@ -193,6 +274,21 @@ for item in report.items:
     print(f"[{item.status.upper()}] {item.name}: {item.message}")
 
 report.raise_for_errors()
+```
+
+Console equivalent:
+
+```bash
+msst check \
+  --mode safe \
+  --model_type bs_roformer \
+  --config_path configs/model.yaml \
+  --start_check_point checkpoints/model.ckpt \
+  --data_path datasets/train \
+  --valid_path datasets/valid \
+  --results_path results/training \
+  --dataset_type 1 \
+  --device_ids 0
 ```
 
 The safe mode checks the config, paths, audio metadata, dependencies,
@@ -223,13 +319,30 @@ msst.train(
 )
 ```
 
+Console equivalent:
+
+```bash
+msst train \
+  --launcher standard \
+  --model_type bs_roformer \
+  --config_path configs/model.yaml \
+  --start_check_point checkpoints/model.ckpt \
+  --data_path datasets/train \
+  --valid_path datasets/valid \
+  --results_path results/training \
+  --dataset_type 1 \
+  --num_workers 8 \
+  --device_ids 0
+```
+
 Omit `checkpoint_path` to initialize a new model. Model architecture, batch
 size, chunk length, optimizer, schedule, and epoch count are configured in the
 YAML file. Runtime and data-loading options are function arguments.
 
 For multiple devices, choose `launcher="ddp"`. The `accelerate` launcher is
 available when the `accelerate` extra and its runtime are used. See
-[Python API: Training](python_api.md#training) for all accepted options.
+[Python API: Training](python_api.md#training) and
+[MSST command-line interface](cli.md#training) for all accepted options.
 
 ## Track an experiment
 

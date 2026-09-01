@@ -30,7 +30,3 @@
 - [Model artifacts](model_artifacts.md) — config/checkpoint identity and
   checkpoint-format metadata.
 - [Publishing](releasing.md) — build, validation, and release procedure.
-
-The README at the repository root is the package landing page and PyPI
-description. Detailed behavior belongs in these documents so the landing page
-can remain focused on installation and first use.

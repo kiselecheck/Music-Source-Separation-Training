@@ -4,13 +4,18 @@
 ![Python 3.10–3.13](https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?logo=python&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
-MSST is a Python library for music source separation with PyTorch. It provides
-one package for inference, validation, training, dataset metadata, preflight
-checks, and experiment tracking across a broad collection of separation
-architectures.
+MSST (Music Source Separation Training) is a PyTorch library for building and
+using music source separation models. It provides a common runtime for
+inference, validation, training, dataset preparation, preflight checks, and
+experiment tracking across many separation architectures.
 
-Model configurations and checkpoints are external artifacts. Supply the YAML
-configuration and weights that belong to the model you want to run.
+The project is designed for both ready-to-use models and model development. A
+user can load a published config/checkpoint pair and separate audio; a
+researcher can train the same architecture on another dataset, evaluate it
+with consistent metrics, resume from a checkpoint, or run it on multiple
+devices. The Python API and command-line interface call the same packaged
+runtime, so notebooks, applications, and automated jobs use the same model and
+dataset implementations.
 
 [Getting started](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/getting_started.md) ·
 [Python API](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/python_api.md) ·
@@ -18,6 +23,35 @@ configuration and weights that belong to the model you want to run.
 [Compatibility](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/compatibility.md) ·
 [Dataset layouts](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/dataset_types.md) ·
 [Pretrained models](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/pretrained_models.md)
+
+## What is included
+
+This repository contains:
+
+- model implementations including RoFormer, MDX, Demucs, SCNet, BandIt,
+  Apollo, Conformer, and related architectures;
+- reusable inference for in-memory audio, individual files, and folders;
+- training and fine-tuning with configurable datasets, losses, optimizers,
+  validation, checkpointing, LoRA, and multi-device launchers;
+- checkpoint validation and source-separation metrics;
+- eight training dataset layouts, metadata caching, and audio augmentations;
+- typed Python interfaces, a command-line interface, experiment records,
+  tests, and package documentation.
+
+An MSST operation is assembled from four main pieces:
+
+| Piece | Purpose |
+| --- | --- |
+| `model_type` | Selects the model implementation, such as `bs_roformer`. |
+| YAML config | Defines architecture, instruments, audio settings, and training parameters. |
+| Checkpoint | Stores learned weights and optional resume state. |
+| Workflow | Runs inference, validation, metadata generation, checks, or training. |
+
+The package contains executable Python code. Model configs, checkpoints,
+datasets, and generated results are external artifacts, so they can be updated,
+stored, and versioned independently. Published config/checkpoint pairs are
+listed in the
+[pretrained model catalog](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/pretrained_models.md).
 
 ## Installation
 
@@ -27,14 +61,29 @@ MSST supports CPython 3.10, 3.11, 3.12, and 3.13.
 pip install msst
 ```
 
-Install the extra for the selected model architecture. Add `train` or
-`validation` when those workflows are needed:
+Each architecture can have its own optional dependencies. Install the extra
+whose name matches the selected `model_type`. Add `train` or `validation` when
+those workflows are needed:
 
 ```bash
 pip install "msst[bs_roformer]"
 pip install "msst[validation,bs_roformer]"
 pip install "msst[train,bs_roformer]"
 ```
+
+To install dependencies for every supported model family:
+
+```bash
+pip install "msst[all-models]"
+```
+
+Most users should install only the model extras they need. `all-models` is a
+large environment and intentionally excludes dependencies that are restricted
+to a narrow platform. Those models use their own extra, so one unavailable
+architecture does not prevent the generally available model families from
+being installed. For example, install BSMamba2 separately with
+`msst[bs_mamba2]` on a supported system. Workflow extras can still be combined
+as `msst[train,validation,all-models]`.
 
 On a CUDA system, install a PyTorch build compatible with the target GPU before
 installing MSST. MSST does not bundle CUDA binaries.
