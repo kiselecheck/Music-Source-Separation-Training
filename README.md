@@ -51,7 +51,7 @@ The package contains executable Python code. Model configs, checkpoints,
 datasets, and generated results are external artifacts, so they can be updated,
 stored, and versioned independently. Published config/checkpoint pairs are
 listed in the
-[pretrained model catalog](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/pretrained_models.md).
+[pretrained model catalog](docs/pretrained_models.md).
 
 ## Installation
 
@@ -130,7 +130,7 @@ print(stems.keys())
 
 `Separator.separate()` also accepts an in-memory NumPy waveform. Input and
 output format details are documented in the
-[compatibility guide](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/compatibility.md).
+[compatibility guide](docs/compatibility.md).
 
 ## Training
 
@@ -170,7 +170,7 @@ msst train --launcher accelerate --help
 ```
 
 Dataset structures are described in the
-[dataset layout guide](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/dataset_types.md).
+[dataset layout guide](docs/dataset_types.md).
 
 ## Validation
 
@@ -360,7 +360,7 @@ pip install "msst[train,validation,bs_roformer]"
 ```
 
 See the
-[model compatibility table](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/compatibility.md#model-extras)
+[model compatibility table](docs/compatibility.md#model-extras)
 for architecture-specific notes.
 
 ## Python API
@@ -383,21 +383,21 @@ msst.load_experiment
 Public functions accept `str` and `pathlib.Path` values and are annotated for
 type checkers. Package-specific exceptions inherit from `msst.MSSTError`.
 Use `help(msst.inference)` or the
-[complete Python API reference](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/python_api.md)
+[complete Python API reference](docs/python_api.md)
 for every parameter, return type, and error condition.
 
 Additional documentation:
 
-- [Getting started](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/getting_started.md)
-- [Command-line interface](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/cli.md)
-- [Experiments and run tracking](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/experiments.md)
-- [Augmentations](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/augmentations.md)
-- [LoRA training](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/LoRA.md)
-- [Package architecture](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/package_architecture.md)
+- [Getting started](docs/getting_started.md)
+- [Command-line interface](docs/cli.md)
+- [Experiments and run tracking](docs/experiments.md)
+- [Augmentations](docs/augmentations.md)
+- [LoRA training](docs/LoRA.md)
+- [Package architecture](docs/package_architecture.md)
 
 ## License and citation
 
-MSST is distributed under the [MIT License](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/LICENSE).
+MSST is distributed under the [MIT License](LICENSE).
 
 If MSST contributes to published work, cite:
 
