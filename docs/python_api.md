@@ -327,8 +327,7 @@ Accelerate process creation remains owned by `accelerate launch`; selecting
 
 New checkpoints contain compatibility metadata such as `format_version`,
 `msst_version`, `model_type`, selected stem, and stem count when known. Configs
-and checkpoints have versions independent of the Python distribution; see
-[model artifact versioning](model_artifacts.md).
+and checkpoints have versions independent of the Python distribution.
 
 ## Experiments and run tracking
 

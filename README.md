@@ -393,7 +393,6 @@ Additional documentation:
 - [Experiments and run tracking](docs/experiments.md)
 - [Augmentations](docs/augmentations.md)
 - [LoRA training](docs/LoRA.md)
-- [Package architecture](docs/package_architecture.md)
 
 ## License and citation
 
