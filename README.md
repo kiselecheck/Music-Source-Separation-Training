@@ -333,7 +333,7 @@ dependencies. Other architectures have an extra with the same name:
 
 | Model type | Extra |
 | --- | --- |
-| `mdx23c`, `experimental_mdx23c_stht`, `scnet`, `scnet_masked` | Base package |
+| `dttnet`, `mdx23c`, `experimental_mdx23c_stht`, `scnet`, `scnet_masked` | Base package |
 | `apollo` | `apollo` |
 | `bandit` | `bandit` |
 | `bandit_v2` | `bandit_v2` |

@@ -18,6 +18,7 @@ REQUIRED_FILES = {
     "msst/inference.py",
     "msst/py.typed",
     "msst/validation.py",
+    "msst/models/DTTNet.py",
     "msst/models/bs_roformer/bs_roformer.py",
     "msst/training.py",
     "msst/utils/dataset.py",

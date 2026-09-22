@@ -56,6 +56,7 @@ fails to install.
 | `bs_roformer` | `bs_roformer` | Includes optional PoPE support. |
 | `bs_roformer_experimental` | `bs_roformer_experimental` |  |
 | `conformer` | `conformer` |  |
+| `dttnet` | none | Base dependencies are sufficient. |
 | `experimental_mdx23c_stht` | none | Base dependencies are sufficient. |
 | `htdemucs` | `htdemucs` |  |
 | `mdx23c` | none | Base dependencies are sufficient. |
