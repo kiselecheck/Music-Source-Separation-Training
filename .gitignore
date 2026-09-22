@@ -78,4 +78,7 @@ Scripts/
 *.code-workspace
 
 results/
+!tests/upstream_parity/results/
+!tests/upstream_parity/results/**
+tests/upstream_parity/results/*.xml
 wandb/

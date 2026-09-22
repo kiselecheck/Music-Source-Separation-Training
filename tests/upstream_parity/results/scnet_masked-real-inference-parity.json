@@ -1,0 +1,185 @@
+{
+  "created_utc": "2026-09-21T13:21:53.139977+00:00",
+  "passed": true,
+  "comparison_scope": "folder-level separation from checkpoint load through float-WAV output",
+  "options": {
+    "model_type": "scnet_masked",
+    "config_file": "config_musdb18_scnet_small.yaml",
+    "config_sha256": "edcfd24366a775d11950d19f17deef284bd6d466daecd4afbcd634dfc8065b09",
+    "checkpoint_file": "model_scnet_masked_ep_156_sdr_8.8149.ckpt",
+    "checkpoint_bytes": 42517058,
+    "checkpoint_sha256": "dcd70804f21d97a63e32e246ef6a8fe32644cbae6399be857df3215b3288ece9",
+    "audio_fixture": "user-selected local audio file",
+    "audio_sha256": "6e9b4423d90ea14cbc4dbe267ef487722168010ca592fdf809c9209c016a929c",
+    "audio_seconds": 3.0,
+    "audio_sample_rate": 44100,
+    "audio_channels": 2,
+    "audio_limit_seconds": 3.0,
+    "repeats": 1,
+    "threads": 1,
+    "bigshifts": 1,
+    "use_tta": false,
+    "output_subtype": "FLOAT"
+  },
+  "environment": {
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 12,
+    "upstream_revision": "050cae7345f4ac1e1e27e066c2c5cdc0a2cdb679",
+    "upstream_worktree_status": "",
+    "package_revision": "72224dff7e8159a009f7fb7bf0d6a5afbc3568a6",
+    "package_worktree_status": "M README.md\n M docs/compatibility.md\n M docs/pretrained_models.md\n M gui/gui-wx.py\n M msst/utils/settings.py\n M pyproject.toml\n?? configs/config_vocals_DTTNet.yaml\n?? msst/models/DTTNet.py\n?? tests/upstream_parity/README.md\n?? tests/upstream_parity/benchmark_real_inference.py\n?? tests/upstream_parity/model_runner.py\n?? tests/upstream_parity/real_inference_runner.py\n?? tests/upstream_parity/test_dttnet_package.py\n?? tests/upstream_parity/test_model_parity.py\n?? tests/upstream_parity/test_real_inference.py\n?? tests/upstream_parity/test_shared_utilities.py\n?? tests/upstream_parity/test_source_inventory_parity.py\n?? tests/upstream_parity/utility_runner.py"
+  },
+  "implementations": {
+    "upstream": {
+      "implementation": "upstream",
+      "model_type": "scnet_masked",
+      "sample_rate": 44100,
+      "instruments": [
+        "drums",
+        "bass",
+        "other",
+        "vocals"
+      ],
+      "threads": 1,
+      "model_load_seconds": 0.08567160001257434,
+      "processing_runs_seconds": [
+        10.873623399995267
+      ],
+      "processing_median_seconds": 10.873623399995267,
+      "output_files": [
+        "audio/bass.wav",
+        "audio/drums.wav",
+        "audio/other.wav",
+        "audio/vocals.wav"
+      ],
+      "runner_seconds": 11.357244300015736,
+      "python": "3.12.3",
+      "torch": "2.6.0+cu126"
+    },
+    "package": {
+      "implementation": "package",
+      "model_type": "scnet_masked",
+      "sample_rate": 44100,
+      "instruments": [
+        "drums",
+        "bass",
+        "other",
+        "vocals"
+      ],
+      "threads": 1,
+      "model_load_seconds": 0.4627203999552876,
+      "processing_runs_seconds": [
+        10.798303599993233
+      ],
+      "processing_median_seconds": 10.798303599993233,
+      "output_files": [
+        "audio/bass.wav",
+        "audio/drums.wav",
+        "audio/other.wav",
+        "audio/vocals.wav"
+      ],
+      "runner_seconds": 11.284997800015844,
+      "python": "3.12.3",
+      "torch": "2.6.0+cu126"
+    }
+  },
+  "process_wall_seconds": {
+    "upstream": 13.493402599997353,
+    "package": 13.4426426999853
+  },
+  "timing_comparison": {
+    "upstream_processing_median_seconds": 10.873623399995267,
+    "package_processing_median_seconds": 10.798303599993233,
+    "package_over_upstream_time_ratio": 0.993073164553219,
+    "upstream_realtime_factor": 0.2758969930852402,
+    "package_realtime_factor": 0.2778214163196782
+  },
+  "stem_comparisons": [
+    {
+      "file": "audio/bass.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    },
+    {
+      "file": "audio/drums.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    },
+    {
+      "file": "audio/other.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    },
+    {
+      "file": "audio/vocals.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    }
+  ]
+}

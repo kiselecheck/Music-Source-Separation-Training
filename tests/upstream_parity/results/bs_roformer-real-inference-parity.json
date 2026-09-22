@@ -1,0 +1,185 @@
+{
+  "created_utc": "2026-09-21T13:37:43.314888+00:00",
+  "passed": true,
+  "comparison_scope": "folder-level separation from checkpoint load through float-WAV output",
+  "options": {
+    "model_type": "bs_roformer",
+    "config_file": "config_bs_roformer_384_8_2_485100.yaml",
+    "config_sha256": "d8afb980318d0c08b9c2e24a7adc00d4f3150320c127a7e4de861800d1321939",
+    "checkpoint_file": "model_bs_roformer_ep_17_sdr_9.6568.ckpt",
+    "checkpoint_bytes": 527385512,
+    "checkpoint_sha256": "3e9daecd70aaed5b5a0d1f861cc4d77eaa45afb3fc6301b1cf32c1be0f5868fb",
+    "audio_fixture": "user-selected local audio file",
+    "audio_sha256": "6e9b4423d90ea14cbc4dbe267ef487722168010ca592fdf809c9209c016a929c",
+    "audio_seconds": 3.0,
+    "audio_sample_rate": 44100,
+    "audio_channels": 2,
+    "audio_limit_seconds": 3.0,
+    "repeats": 1,
+    "threads": 1,
+    "bigshifts": 1,
+    "use_tta": false,
+    "output_subtype": "FLOAT"
+  },
+  "environment": {
+    "python": "3.12.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "logical_cpu_count": 12,
+    "upstream_revision": "050cae7345f4ac1e1e27e066c2c5cdc0a2cdb679",
+    "upstream_worktree_status": "",
+    "package_revision": "72224dff7e8159a009f7fb7bf0d6a5afbc3568a6",
+    "package_worktree_status": "M .gitignore\n M README.md\n M docs/compatibility.md\n M docs/pretrained_models.md\n M gui/gui-wx.py\n M msst/utils/settings.py\n M pyproject.toml\n?? configs/config_vocals_DTTNet.yaml\n?? msst/models/DTTNet.py\n?? tests/upstream_parity/README.md\n?? tests/upstream_parity/benchmark_real_inference.py\n?? tests/upstream_parity/model_runner.py\n?? tests/upstream_parity/real_inference_runner.py\n?? tests/upstream_parity/results/fast-parity-suite.xml\n?? tests/upstream_parity/results/mdx23c-real-inference-parity.json\n?? tests/upstream_parity/results/mdx23c-real-inference-parity.md\n?? tests/upstream_parity/results/scnet_masked-real-inference-parity.json\n?? tests/upstream_parity/results/scnet_masked-real-inference-parity.md\n?? tests/upstream_parity/test_dttnet_package.py\n?? tests/upstream_parity/test_model_parity.py\n?? tests/upstream_parity/test_real_inference.py\n?? tests/upstream_parity/test_shared_utilities.py\n?? tests/upstream_parity/test_source_inventory_parity.py\n?? tests/upstream_parity/utility_runner.py"
+  },
+  "implementations": {
+    "upstream": {
+      "implementation": "upstream",
+      "model_type": "bs_roformer",
+      "sample_rate": 44100,
+      "instruments": [
+        "drums",
+        "bass",
+        "other",
+        "vocals"
+      ],
+      "threads": 1,
+      "model_load_seconds": 3.2808938000234775,
+      "processing_runs_seconds": [
+        83.20989670004928
+      ],
+      "processing_median_seconds": 83.20989670004928,
+      "output_files": [
+        "audio/bass.wav",
+        "audio/drums.wav",
+        "audio/other.wav",
+        "audio/vocals.wav"
+      ],
+      "runner_seconds": 86.96837399998913,
+      "python": "3.12.3",
+      "torch": "2.6.0+cu126"
+    },
+    "package": {
+      "implementation": "package",
+      "model_type": "bs_roformer",
+      "sample_rate": 44100,
+      "instruments": [
+        "drums",
+        "bass",
+        "other",
+        "vocals"
+      ],
+      "threads": 1,
+      "model_load_seconds": 3.3892597999656573,
+      "processing_runs_seconds": [
+        83.5603054999956
+      ],
+      "processing_median_seconds": 83.5603054999956,
+      "output_files": [
+        "audio/bass.wav",
+        "audio/drums.wav",
+        "audio/other.wav",
+        "audio/vocals.wav"
+      ],
+      "runner_seconds": 86.97837939998135,
+      "python": "3.12.3",
+      "torch": "2.6.0+cu126"
+    }
+  },
+  "process_wall_seconds": {
+    "upstream": 89.88339400000405,
+    "package": 89.88362420001067
+  },
+  "timing_comparison": {
+    "upstream_processing_median_seconds": 83.20989670004928,
+    "package_processing_median_seconds": 83.5603054999956,
+    "package_over_upstream_time_ratio": 1.0042111433115877,
+    "upstream_realtime_factor": 0.0360534037292973,
+    "package_realtime_factor": 0.035902214359426414
+  },
+  "stem_comparisons": [
+    {
+      "file": "audio/bass.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    },
+    {
+      "file": "audio/drums.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    },
+    {
+      "file": "audio/other.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    },
+    {
+      "file": "audio/vocals.wav",
+      "same_metadata": true,
+      "upstream_format": "WAV",
+      "upstream_subtype": "FLOAT",
+      "package_format": "WAV",
+      "package_subtype": "FLOAT",
+      "upstream_shape": [
+        132300,
+        2
+      ],
+      "package_shape": [
+        132300,
+        2
+      ],
+      "max_abs_error": 0.0,
+      "rmse": 0.0,
+      "relative_rmse": 0.0,
+      "exact_sample_match": true,
+      "passed": true
+    }
+  ]
+}
