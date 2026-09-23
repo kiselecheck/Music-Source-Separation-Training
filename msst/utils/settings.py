@@ -19,6 +19,7 @@ from msst.errors import (
     OutputFormatError,
     optional_dependency_error,
 )
+from msst.models.registry import get_model_registration, model_uses_internal_loss
 
 
 def _merge_argument_overrides(
@@ -178,8 +179,10 @@ def parse_args_train(dict_args: Union[argparse.Namespace, Dict, None]) -> argpar
     if args.metric_for_scheduler not in args.metrics:
         args.metrics += [args.metric_for_scheduler]
 
-    get_internal_loss = (args.model_type in ('mel_band_conformer',) or 'roformer' in args.model_type
-                         ) and not args.use_standard_loss
+    get_internal_loss = (
+        model_uses_internal_loss(args.model_type)
+        and not args.use_standard_loss
+    )
     if get_internal_loss:
         args.loss = [f'{args.model_type}_loss']
     return args
@@ -396,14 +399,18 @@ def build_model_from_config(
     """Instantiate a model from config, optionally with external base weights."""
     if not hasattr(config, 'training'):
         raise ConfigurationError("Configuration is missing the required 'training' section")
+    if 'model_type' in config.training:
+        model_type = config.training.model_type
+    custom_registration = get_model_registration(model_type)
+    if custom_registration is not None:
+        return custom_registration.build(config, pretrained=pretrained)
+
     model_section = 'kwargs' if model_type == 'bandit_v2' else 'model'
     if model_type != 'htdemucs' and not hasattr(config, model_section):
         raise ConfigurationError(
             f"Configuration is missing the required {model_section!r} section "
             f"for model_type={model_type!r}"
         )
-    if 'model_type' in config.training:
-        model_type = config.training.model_type
     if model_type == 'mdx23c':
         from msst.models.mdx23c_tfc_tdf_v3 import TFC_TDF_net
         model = TFC_TDF_net(config)

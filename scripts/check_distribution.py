@@ -19,6 +19,7 @@ REQUIRED_FILES = {
     "msst/py.typed",
     "msst/validation.py",
     "msst/models/DTTNet.py",
+    "msst/models/registry.py",
     "msst/models/bs_roformer/bs_roformer.py",
     "msst/training.py",
     "msst/utils/dataset.py",

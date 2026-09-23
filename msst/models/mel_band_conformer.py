@@ -239,7 +239,7 @@ class MelBandConformer(nn.Module):
         self.register_buffer('num_freqs_per_band', num_freqs_per_band, persistent=False)
         self.register_buffer('num_bands_per_freq', num_bands_per_freq, persistent=False)
 
-        # BandSplit and MaskEstimator — same structure as your original
+        # BandSplit and MaskEstimator components.
         freqs_per_bands_with_complex = tuple(2 * f * self.audio_channels for f in num_freqs_per_band.tolist())
 
         self.band_split = BandSplit(

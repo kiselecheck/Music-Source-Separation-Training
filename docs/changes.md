@@ -1,5 +1,10 @@
 ### Changes 
 
+#### v0.1.1
+
+* Added a registry and base interface for custom model extensions.
+* Added a compact custom-model example and a training/validation smoke test.
+
 #### v1.0.2
 
 * Added multi GPU validation (earlier validation was performed on single GPU)

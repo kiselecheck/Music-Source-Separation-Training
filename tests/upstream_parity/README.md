@@ -14,31 +14,23 @@ The fast suite checks:
   used because `load_chunk` does not call them), spectral-loss values and
   gradients, and one Adam optimizer update.
 
-Run it from the MSST repository root in PowerShell:
+Run the suite from the MSST repository root. First create a detached worktree
+for the reference revision and set `MSST_UPSTREAM_ROOT` in the shell environment
+to its absolute path:
 
-```powershell
-git worktree add --detach ..\zfturbo-upstream-parity 050cae7345f4ac1e1e27e066c2c5cdc0a2cdb679
-$env:MSST_UPSTREAM_ROOT = (Resolve-Path ..\zfturbo-upstream-parity).Path
-python -m pytest tests\upstream_parity -q
+```bash
+git worktree add --detach ../zfturbo-upstream-parity 050cae7345f4ac1e1e27e066c2c5cdc0a2cdb679
+python -m pytest -q tests/upstream_parity
 ```
 
-The release-checkpoint tests are opt-in. Set the matching config/checkpoint
-variables for any of MDX23C, SCNet Masked, and BS Roformer. Audio and detailed reports are optional;
-without an audio path the benchmark makes a deterministic stereo fixture. By
-default it takes a short leading fragment so large CPU models remain practical.
+The release-checkpoint tests are opt-in. Configure the matching environment
+variables for any of MDX23C, SCNet Masked, and BS Roformer, then run the focused
+inference comparison. Audio and detailed reports are optional; without an
+audio path the benchmark makes a deterministic stereo fixture. By default it
+takes a short leading fragment so large CPU models remain practical.
 
-```powershell
-$env:MSST_PARITY_MDX23C_CONFIG = (Resolve-Path configs\config_musdb18_mdx23c.yaml).Path
-$env:MSST_PARITY_MDX23C_CHECKPOINT = 'C:\weights\model_mdx23c_ep_168_sdr_7.0207.ckpt'
-$env:MSST_PARITY_SCNET_MASKED_CONFIG = 'C:\weights\config_musdb18_scnet_small.yaml'
-$env:MSST_PARITY_SCNET_MASKED_CHECKPOINT = 'C:\weights\model_scnet_masked_ep_156_sdr_8.8149.ckpt'
-$env:MSST_PARITY_BS_ROFORMER_CONFIG = 'C:\weights\config_bs_roformer_384_8_2_485100.yaml'
-$env:MSST_PARITY_BS_ROFORMER_CHECKPOINT = 'C:\weights\model_bs_roformer_ep_17_sdr_9.6568.ckpt'
-$env:MSST_PARITY_AUDIO = 'C:\audio\mixture.wav'
-$env:MSST_PARITY_AUDIO_SECONDS = '3'
-$env:MSST_PARITY_REPEATS = '1'
-$env:MSST_PARITY_REPORT_DIR = (Join-Path (Get-Location) 'tests\upstream_parity\results')
-python -m pytest tests\upstream_parity\test_real_inference.py -q -vv
+```bash
+python -m pytest -q -vv tests/upstream_parity/test_real_inference.py
 ```
 
 The end-to-end comparison loads the same checkpoint, runs the source tree's

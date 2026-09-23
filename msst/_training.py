@@ -20,6 +20,7 @@ from msst.utils.settings import get_scheduler, parse_args_train, initialize_envi
     initialize_environment, get_model_from_config, validate_train_args, wandb_init
 from msst.utils.model_utils import save_weights, normalize_batch, \
     save_last_weights, initialize_model_and_device
+from msst.models.registry import model_uses_internal_loss
 
 from msst._validation import valid_multi_gpu, valid
 from msst.checkpoints import build_checkpoint_metadata
@@ -200,13 +201,7 @@ def compute_training_loss(
     if getattr(config.training, 'normalize', False):
         x, y = normalize_batch(x, y)
     get_internal_loss = (
-        args.model_type in (
-            'mel_band_roformer',
-            'bs_roformer',
-            'bs_mamba2',
-            'mel_band_conformer',
-            'bs_conformer',
-        )
+        model_uses_internal_loss(args.model_type)
         and not args.use_standard_loss
     )
     with torch.autocast(

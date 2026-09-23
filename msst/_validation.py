@@ -289,7 +289,7 @@ def process_audio_files(
             for metric in args.metrics
         }
 
-    # --- tqdm wrapping as requested ---
+    # Add a progress bar only when enabled on the logging rank.
     if is_tqdm and should_print:
         mixture_paths = tqdm(mixture_paths)
 

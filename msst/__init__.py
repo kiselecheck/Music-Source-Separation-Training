@@ -24,6 +24,13 @@ from .inference import (
     inference,
 )
 from .metadata import MetadataResult, build_metadata
+from .models.registry import (
+    MSSTBaseModel,
+    ModelRegistration,
+    register_model,
+    registered_models,
+    unregister_model,
+)
 from .preflight import CheckItem, CheckMode, CheckReport, check
 from .training import Launcher, train
 from .validation import (
@@ -50,6 +57,8 @@ __all__ = [
     "Launcher",
     "MSSTError",
     "MetadataResult",
+    "MSSTBaseModel",
+    "ModelRegistration",
     "NATIVE_AUDIO_EXTENSIONS",
     "OptionalDependencyError",
     "OutputFormatError",
@@ -64,7 +73,10 @@ __all__ = [
     "inference",
     "init_experiment",
     "load_experiment",
+    "register_model",
+    "registered_models",
     "train",
+    "unregister_model",
     "valid",
     "__version__",
 ]
