@@ -490,9 +490,16 @@ def get_metrics(
     mix = mix[..., :min_length]
 
     if 'sdr' in metrics or 'k_sdr' in metrics:
-        references = np.expand_dims(reference, axis=0)
-        estimates = np.expand_dims(estimate, axis=0)
-        sdr_val = np.mean(sdr(references, estimates))
+        if torch.device(device).type == 'cuda':
+            ref_t = torch.from_numpy(reference).to(device, torch.float64)
+            est_t = torch.from_numpy(estimate).to(device, torch.float64)
+            numerator = torch.sum(ref_t ** 2) + 1e-8
+            denominator = torch.sum((ref_t - est_t) ** 2) + 1e-8
+            sdr_val = (10 * torch.log10(numerator / denominator)).item()
+        else:
+            references = np.expand_dims(reference, axis=0)
+            estimates = np.expand_dims(estimate, axis=0)
+            sdr_val = np.mean(sdr(references, estimates))
         result['sdr'] = float(sdr_val)
         result['k_sdr'] = k_sdr(float(sdr_val), k)
     if 'si_sdr' in metrics:

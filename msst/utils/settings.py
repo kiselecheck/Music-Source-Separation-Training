@@ -19,6 +19,7 @@ from msst.errors import (
     OutputFormatError,
     optional_dependency_error,
 )
+from msst.models.builtin import BUILTIN_MODEL_FACTORIES
 from msst.models.registry import get_model_registration, model_uses_internal_loss
 
 
@@ -85,11 +86,19 @@ def parse_args_train(dict_args: Union[argparse.Namespace, Dict, None]) -> argpar
                         help="Ignore forward errors")
     parser.add_argument("--results_path", type=str,
                         help="path to folder where results will be stored (weights, metadata)")
+    parser.add_argument("--metadata_path", type=str, default=None,
+                        help="optional path for precomputed dataset metadata/cache")
     parser.add_argument("--data_path", nargs="+", type=str, help="Dataset data paths. You can provide several folders.")
     parser.add_argument("--dataset_type", type=int, default=1,
                         help="Dataset type. Must be one of: 1, 2, 3, 4, 5, 6, 7, 8. Details here: https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/dataset_types.md")
     parser.add_argument("--valid_path", nargs="+", type=str,
                         help="validation data paths. You can provide several folders.")
+    parser.add_argument("--validation_manifest", type=str, default="",
+                        help="Optional CSV selecting validation mixtures by key and path")
+    parser.add_argument("--validation_track_csv", action='store_true',
+                        help="Write keyed per-track validation metrics after each epoch")
+    parser.add_argument("--track_csv_path", type=str, default="",
+                        help="Optional output path for per-track validation metrics CSV")
     parser.add_argument("--num_workers", type=int, default=0, help="dataloader num_workers")
     parser.add_argument("--pin_memory", action='store_true', help="dataloader pin_memory")
     parser.add_argument("--seed", type=int, default=0, help="random seed")
@@ -241,12 +250,21 @@ def parse_args_valid(dict_args: Union[Dict, None]) -> argparse.Namespace:
     parser.add_argument("--start_check_point", type=str, default='', help="Initial checkpoint"
                                                                           " to valid weights")
     parser.add_argument("--valid_path", nargs="+", type=str, help="Validate path")
+    parser.add_argument("--validation_manifest", type=str, default="",
+                        help="Optional CSV selecting validation mixtures by key and path")
+    parser.add_argument("--track_csv_path", type=str, default="",
+                        help="Write keyed per-track validation metrics to this CSV path")
     parser.add_argument("--store_dir", type=str, default="", help="Path to store results as wav file")
     parser.add_argument("--draw_spectro", type=float, default=0,
                         help="If --store_dir is set then code will generate spectrograms for resulted stems as well."
                              " Value defines for how many seconds os track spectrogram will be generated.")
     parser.add_argument("--device_ids", nargs='+', type=int, default=[0], help='List of gpu ids')
     parser.add_argument("--force_cpu", action='store_true', help='Force validation to run on CPU')
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Compile the model for faster inference on one CUDA GPU",
+    )
     parser.add_argument("--num_workers", type=int, default=0, help="Dataloader num_workers")
     parser.add_argument("--pin_memory", action='store_true', help="Dataloader pin_memory")
     parser.add_argument("--extension", type=str, default='wav', help="Choose extension for validation")
@@ -305,6 +323,11 @@ def parse_args_inference(dict_args: Union[Dict, None]) -> argparse.Namespace:
                         help="invert vocals to get instrumental if provided")
     parser.add_argument("--disable_detailed_pbar", action='store_true', help="disable detailed progress bar")
     parser.add_argument("--force_cpu", action='store_true', help="Force the use of CPU even if CUDA is available")
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Compile the model for faster inference on one CUDA GPU",
+    )
     parser.add_argument("--flac_file", action='store_true', help="Output flac file instead of wav")
     parser.add_argument("--pcm_type", type=str, choices=['PCM_16', 'PCM_24', 'FLOAT'], default=None,
                         help="Output subtype (default: FLOAT for WAV, PCM_24 for FLAC)")
@@ -405,91 +428,16 @@ def build_model_from_config(
     if custom_registration is not None:
         return custom_registration.build(config, pretrained=pretrained)
 
-    model_section = 'kwargs' if model_type == 'bandit_v2' else 'model'
-    if model_type != 'htdemucs' and not hasattr(config, model_section):
+    model_factory = BUILTIN_MODEL_FACTORIES.get(model_type)
+    if model_factory is None:
+        raise ConfigurationError(f"Unknown model type: {model_type}")
+    model_section = model_factory.config_section
+    if model_section is not None and not hasattr(config, model_section):
         raise ConfigurationError(
             f"Configuration is missing the required {model_section!r} section "
             f"for model_type={model_type!r}"
         )
-    if model_type == 'mdx23c':
-        from msst.models.mdx23c_tfc_tdf_v3 import TFC_TDF_net
-        model = TFC_TDF_net(config)
-    elif model_type == 'htdemucs':
-        from msst.models.demucs4ht import get_model
-        model = get_model(config)
-    elif model_type == 'segm_models':
-        from msst.models.segm_models import Segm_Models_Net
-        model = Segm_Models_Net(config, pretrained=pretrained)
-    elif model_type == 'torchseg':
-        from msst.models.torchseg_models import Torchseg_Net
-        model = Torchseg_Net(config, pretrained=pretrained)
-    elif model_type == 'mel_band_roformer':
-        from msst.models.bs_roformer import MelBandRoformer
-        model = MelBandRoformer(**dict(config.model))
-    elif model_type == 'mel_band_conformer':
-        from msst.models.bs_roformer import MelBandConformer
-        model = MelBandConformer(**dict(config.model))
-    elif model_type == 'mel_band_roformer_experimental':
-        from msst.models.bs_roformer.mel_band_roformer_experimental import MelBandRoformer
-        model = MelBandRoformer(**dict(config.model))
-    elif model_type == 'bs_roformer':
-        from msst.models.bs_roformer import BSRoformer
-        model = BSRoformer(**dict(config.model))
-    elif model_type == 'bs_conformer':
-        from msst.models.bs_roformer import BSConformer
-        model = BSConformer(**dict(config.model))
-    elif model_type == 'bs_roformer_experimental':
-        from msst.models.bs_roformer.bs_roformer_experimental import BSRoformer
-        model = BSRoformer(**dict(config.model))
-    elif model_type == 'bs_mamba2':
-        from msst.models.bs_mamba2_code.bs_mamba2 import BSMamba2Model
-        model = BSMamba2Model(**dict(config.model))
-    elif model_type == 'swin_upernet':
-        from msst.models.upernet_swin_transformers import Swin_UperNet_Model
-        model = Swin_UperNet_Model(config, pretrained=pretrained)
-    elif model_type == 'bandit':
-        from msst.models.bandit.core.model import MultiMaskMultiSourceBandSplitRNNSimple
-        model = MultiMaskMultiSourceBandSplitRNNSimple(**config.model)
-    elif model_type == 'bandit_v2':
-        from msst.models.bandit_v2.bandit import Bandit
-        model = Bandit(**config.kwargs)
-    elif model_type == 'scnet_unofficial':
-        from msst.models.scnet_unofficial import SCNet
-        model = SCNet(**config.model)
-    elif model_type == 'scnet':
-        from msst.models.scnet import SCNet
-        model = SCNet(**config.model)
-    elif model_type == 'scnet_tran':
-        from msst.models.scnet.scnet_tran import SCNet_Tran
-        model = SCNet_Tran(**config.model)
-    elif model_type == 'apollo':
-        from msst.models.look2hear.models import BaseModel
-        model = BaseModel.apollo(**config.model)
-    elif model_type == 'experimental_mdx23c_stht':
-        from msst.models.mdx23c_tfc_tdf_v3_with_STHT import TFC_TDF_net
-        model = TFC_TDF_net(config)
-    elif model_type == 'dttnet':
-        from msst.models.DTTNet import DPTDFNet
-        model = DPTDFNet(config)
-    elif model_type == 'scnet_masked':
-        from msst.models.scnet.scnet_masked import SCNet
-        model = SCNet(**config.model)
-    elif model_type == 'conformer':
-        from msst.models.conformer_model import ConformerMSS, NeuralModel
-        model = ConformerMSS(
-            core=NeuralModel(**config.model),
-            n_fft=config.stft.n_fft,
-            hop_length=config.stft.hop_length,
-            win_length=getattr(config.stft, 'win_length', config.stft.n_fft),
-            center=config.stft.center
-        )
-    elif model_type == 'moises_light':
-        from moises_light import MoisesLight
-        model = MoisesLight(**dict(config.model))
-    else:
-        raise ConfigurationError(f"Unknown model type: {model_type}")
-
-    return model
+    return model_factory.build(config, pretrained=pretrained)
 
 
 def get_model_from_config(

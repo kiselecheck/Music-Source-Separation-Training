@@ -78,6 +78,7 @@ written = msst.inference(
 | `model_type` | `str = "mdx23c"` | Architecture key matching the config and installed extra. |
 | `device_ids` | `int \| Sequence[int] = 0` | CUDA device index or indices. |
 | `force_cpu` | `bool = False` | Ignore CUDA and use CPU. |
+| `compile` | `bool = False` | Compile the model for single-GPU CUDA inference. |
 | `use_tta` | `bool = False` | Enable test-time augmentation. |
 | `bigshifts` | `int = 1` | Number of shift passes; must be at least one. |
 | `extract_instrumental` | `bool = False` | Add an instrumental stem where supported. |
@@ -138,6 +139,10 @@ Calls on one instance are serialized because model-specific implementations
 are not assumed to be thread-safe. Use separate instances for deliberate
 parallel model execution.
 
+Set `compile=True` to use `torch.compile` during inference or validation on one
+CUDA device. The initial call may take longer while PyTorch compiles the model;
+the cache location follows PyTorch's defaults and cache environment settings.
+
 ## Validation
 
 `msst.valid` evaluates one checkpoint against reference stems. The dataset
@@ -168,8 +173,11 @@ print(result.per_track["sdr"])     # instrument -> individual scores
 | `model_type` | `str = "mdx23c"` | Architecture key. |
 | `device_ids` | `int \| Sequence[int] = 0` | CUDA index or indices. |
 | `force_cpu` | `bool = False` | Run validation on CPU. |
+| `compile` | `bool = False` | Compile the model for single-GPU CUDA validation. |
 | `metrics` | metric or sequence = `("sdr",)` | Metrics to calculate. |
 | `output_folder` | path or `None` | Optional separated stems and result output. |
+| `validation_manifest` | path or `None` | Optional keyed CSV selecting validation tracks. |
+| `track_csv_path` | path or `None` | Optional CSV report with one row per track and instrument. |
 | `extension` | `str = "wav"` | Validation audio extension. |
 | `use_tta` | `bool = False` | Enable validation-time augmentation. |
 | `draw_spectro` | `float = 0` | Seconds of saved spectrograms; zero disables them. |
@@ -189,6 +197,14 @@ as `msst.ValidationMetric`: `sdr`, `k_sdr`, `si_sdr`, `l1_freq`,
 `dict[str, dict[str, list[float]]]`, organized as metric → instrument → scores.
 `ValidationConfig` can be used independently to validate and normalize public
 arguments before a run.
+
+The validation manifest requires `key` and `mixture_path` columns and may
+include `group`. A mixture path may identify an audio file or a track directory
+whose configured component stems are summed. Relative paths resolve from the
+CSV file; they must belong to a `valid_path` root. The group is copied from the
+CSV and is not inferred from directory names. See
+[Validation CLI](cli.md#validation) for an example. The CSV report preserves
+the keys and can be compared across epochs or checkpoints.
 
 ## Dataset metadata
 
@@ -301,7 +317,7 @@ Accepted `**options` use the same names as the CLI:
 | Resume | `load_optimizer`, `load_scheduler`, `load_epoch`, `load_best_metric`, `load_all_metrics`, `load_all_losses`, `safe_mode`, `load_only_compatible_weights`, `checkpoint_exclude_prefixes` |
 | Dataset/loading | `dataset_type`, `num_workers`, `pin_memory`, `seed`, `persistent_workers`, `prefetch_factor` |
 | Loss | `loss`, `masked_loss_coef`, `mse_loss_coef`, `l1_loss_coef`, `log_wmse_loss_coef`, `multistft_loss_coef`, `spec_masked_loss_coef`, `spec_rmse_loss_coef`, `l1_snr_loss_coef`, `l1_snr_db_loss_coef`, `stft_l1_snr_db_loss_coef`, `multi_l1_snr_db_loss_coef`, `fullness_penalty_loss_coef`, `bleedless_penalty_loss_coef`, `use_standard_loss` |
-| Validation/saving | `pre_valid`, `metrics`, `metric_for_scheduler`, `each_metrics_in_name`, `save_weights_every_epoch` |
+| Validation/saving | `pre_valid`, `metrics`, `metric_for_scheduler`, `each_metrics_in_name`, `save_weights_every_epoch`, `validation_manifest`, `validation_track_csv`, `track_csv_path` |
 | Weights/LoRA | `train_lora_peft`, `train_lora_loralib`, `lora_checkpoint_peft`, `lora_checkpoint_loralib`, `freeze_layers` |
 | Weights & Biases | `wandb_key`, `wandb_offline`, `wandb_project`, `wandb_group`, `wandb_run_name`, `wandb_tags`, `wandb_dir` |
 | Runtime | `set_per_process_memory_fraction` |

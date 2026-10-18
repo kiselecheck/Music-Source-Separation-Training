@@ -9,6 +9,7 @@ standard-training workflows without editing this repository.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.metadata import entry_points
 import inspect
 import re
 from typing import Any, Callable, TypeVar
@@ -16,40 +17,15 @@ from typing import Any, Callable, TypeVar
 import torch
 from torch import nn
 
+from msst.errors import ConfigurationError
+from msst.models.builtin import BUILTIN_MODEL_TYPES
+
 
 ModelFactory = Callable[..., nn.Module]
 _ModelT = TypeVar("_ModelT", bound=nn.Module)
 
-# Keep this list close to the registry so an extension cannot silently replace
-# a built-in architecture by registering the same key.
-BUILTIN_MODEL_TYPES = frozenset(
-    {
-        "mdx23c",
-        "htdemucs",
-        "segm_models",
-        "torchseg",
-        "mel_band_roformer",
-        "mel_band_conformer",
-        "mel_band_roformer_experimental",
-        "bs_roformer",
-        "bs_conformer",
-        "bs_roformer_experimental",
-        "bs_mamba2",
-        "swin_upernet",
-        "bandit",
-        "bandit_v2",
-        "scnet_unofficial",
-        "scnet",
-        "scnet_tran",
-        "apollo",
-        "experimental_mdx23c_stht",
-        "dttnet",
-        "scnet_masked",
-        "conformer",
-        "moises_light",
-    }
-)
 _MODEL_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
+_MODEL_ENTRY_POINT_GROUP = "msst.models"
 
 
 class MSSTBaseModel(nn.Module):
@@ -244,15 +220,69 @@ def unregister_model(name: str) -> None:
 
 
 def get_model_registration(name: str) -> ModelRegistration | None:
-    """Return a registration, or ``None`` for legacy built-in models."""
+    """Return a registration, loading an installed plugin only when selected.
 
-    return _REGISTRY.get(_lookup_name(name))
+    Built-in architectures remain handled by the legacy factory. External
+    packages can expose short names through the ``msst.models`` entry point
+    group; their model code is imported only when its name is requested.
+    """
+
+    normalized = _lookup_name(name)
+    registration = _REGISTRY.get(normalized)
+    if registration is not None or normalized in BUILTIN_MODEL_TYPES:
+        return registration
+    return _load_model_entry_point(normalized)
+
+
+def _get_model_entry_points() -> tuple[Any, ...]:
+    discovered = entry_points()
+    if hasattr(discovered, "select"):
+        return tuple(discovered.select(group=_MODEL_ENTRY_POINT_GROUP))
+    # Compatibility with older importlib.metadata implementations.
+    return tuple(discovered.get(_MODEL_ENTRY_POINT_GROUP, ()))
+
+
+def _load_model_entry_point(name: str) -> ModelRegistration | None:
+    matches = [
+        entry_point
+        for entry_point in _get_model_entry_points()
+        if _lookup_name(entry_point.name) == name
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        providers = ", ".join(
+            sorted(
+                getattr(getattr(item, "dist", None), "name", "<unknown>")
+                for item in matches
+            )
+        )
+        raise ConfigurationError(
+            f"Multiple installed MSST model plugins use the name {name!r}: "
+            f"{providers}. Choose a unique entry point name."
+        )
+
+    entry_point = matches[0]
+    try:
+        model_factory = entry_point.load()
+        registration = register_model(name, model_factory)
+    except Exception as error:
+        raise ConfigurationError(
+            f"Cannot load MSST model plugin {name!r} from "
+            f"{entry_point.value!r}: {type(error).__name__}: {error}. "
+            "Install the plugin package and its dependencies, and ensure its "
+            "entry point name is valid and not reserved."
+        ) from error
+    return registration
 
 
 def registered_models() -> tuple[str, ...]:
-    """Return registered extension names in deterministic order."""
+    """Return registered and installed extension names without importing them."""
 
-    return tuple(sorted(_REGISTRY))
+    discovered_names = {
+        _normalize_name(entry_point.name) for entry_point in _get_model_entry_points()
+    }
+    return tuple(sorted(set(_REGISTRY).union(discovered_names)))
 
 
 def model_uses_internal_loss(name: str) -> bool:
@@ -262,10 +292,10 @@ def model_uses_internal_loss(name: str) -> bool:
     registration = _REGISTRY.get(normalized)
     if registration is not None:
         return registration.uses_internal_loss
-    return (
-        "roformer" in normalized
-        or normalized in {"mel_band_conformer", "bs_mamba2", "bs_conformer"}
-    )
+    from msst.models.builtin import BUILTIN_MODEL_FACTORIES
+
+    factory = BUILTIN_MODEL_FACTORIES.get(normalized)
+    return factory.uses_internal_loss if factory is not None else False
 
 
 __all__ = [

@@ -10,7 +10,11 @@ import torch
 
 from msst import _inference as inference
 from msst import AudioFileError
-from msst.utils.model_utils import demix
+from msst.utils.model_utils import (
+    _get_accumulation_device,
+    demix,
+    initialize_model_and_device,
+)
 
 
 def _config(*, normalize=False, channels=2):
@@ -400,3 +404,26 @@ def test_demix_accepts_float_demucs_segment_and_rejects_zero_step():
             torch.device("cpu"),
             model_type="htdemucs",
         )
+
+
+def test_accumulation_device_uses_cpu_without_cuda():
+    assert _get_accumulation_device("cpu", 1) == torch.device("cpu")
+
+
+def test_model_device_initializer_returns_torch_device_on_cpu(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    device, model = initialize_model_and_device(torch.nn.Linear(2, 2), [0])
+
+    assert device == torch.device("cpu")
+    assert isinstance(device, torch.device)
+    assert next(model.parameters()).device == torch.device("cpu")
+
+
+def test_accumulation_device_accounts_for_cached_cuda_memory(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda device: (100, 200))
+    monkeypatch.setattr(torch.cuda, "memory_reserved", lambda device: 80)
+    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda device: 30)
+
+    assert _get_accumulation_device("cuda:0", 70) == torch.device("cuda:0")
+    assert _get_accumulation_device("cuda:0", 80) == torch.device("cpu")

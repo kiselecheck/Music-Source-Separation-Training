@@ -192,7 +192,7 @@ def prepare_training_dataset(
     then read that file. This avoids concurrent writes to the same pickle.
     """
 
-    metadata_path = os.path.join(
+    metadata_path = getattr(args, 'metadata_path', None) or os.path.join(
         args.results_path, f"metadata_{args.dataset_type}.pkl"
     )
     dataset_batch_size = batch_size
@@ -331,14 +331,50 @@ def load_chunk(path, length, chunk_size, offset=None, target_channels = 2):
     return x.T
 
 
+def find_track_audio_file(path, instrument, file_types):
+    for extension in file_types:
+        candidate = f"{path}/{instrument}.{extension}"
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def load_track_mixture_chunk(
+    track_path,
+    track_length,
+    chunk_size,
+    offset,
+    file_types,
+    mixture_source_instruments,
+):
+    """Load an explicit mixture or sum configured component stems."""
+    mixture_path = find_track_audio_file(track_path, 'mixture', file_types)
+    if mixture_path is not None:
+        return load_chunk(mixture_path, track_length, chunk_size, offset=offset)
+    if not mixture_source_instruments:
+        return None
+
+    mixture = None
+    for instrument in mixture_source_instruments:
+        source_path = find_track_audio_file(track_path, instrument, file_types)
+        if source_path is None:
+            raise FileNotFoundError(
+                f"Missing mixture component '{instrument}' in {track_path}"
+            )
+        source = load_chunk(source_path, track_length, chunk_size, offset=offset)
+        mixture = source if mixture is None else mixture + source
+    return mixture
+
+
 def get_track_set_length(params):
     path, instruments, file_types, dataset_type = params[:4]
     excluded_stems = params[4] if len(params) > 4 else None
-    quiet_missing_stems = bool(params[5]) if len(params) > 5 else False
+    allow_missing_target = bool(params[5]) if len(params) > 5 else False
+    mixture_source_instruments = list(params[6]) if len(params) > 6 else []
     should_print = (
         (not dist.is_initialized() or dist.get_rank() == 0)
         and dataset_type != 7
-        and not quiet_missing_stems
+        and not allow_missing_target
     )
     # Check lengths of all instruments (it can be different in some cases)
     lengths_arr = []
@@ -353,18 +389,35 @@ def get_track_set_length(params):
                 if should_print:
                     print(f'Cant read file "{path_to_audio_file}": {e}')
     else:
-        for instr in instruments:
-            length = -1
-            for extension in file_types:
-                path_to_audio_file = path + '/{}.{}'.format(instr, extension)
-                if os.path.isfile(path_to_audio_file):
-                    length = sf.info(path_to_audio_file).frames
-                    break
-            if length == -1:
+        length_instruments = list(instruments or [])
+        prechecked_paths = {}
+        required_mixture_sources = set()
+        if dataset_type == 6 and allow_missing_target:
+            # In single-target mode the explicit mixture defines the sample
+            # even when the requested source is absent. This represents a
+            # hard negative; load_aligned_data() supplies an all-zero target.
+            # Some multi-stem datasets (for example MUSDB) have no stored mix;
+            # reconstruct it from the configured source stems at load time.
+            mixture_path = find_track_audio_file(path, 'mixture', file_types)
+            if mixture_path is not None:
+                prechecked_paths['mixture'] = mixture_path
+                length_instruments.append('mixture')
+            elif mixture_source_instruments:
+                length_instruments.extend(mixture_source_instruments)
+                required_mixture_sources = set(mixture_source_instruments)
+            else:
+                length_instruments.append('mixture')
+        for instr in dict.fromkeys(length_instruments):
+            path_to_audio_file = prechecked_paths.get(instr)
+            if path_to_audio_file is None:
+                path_to_audio_file = find_track_audio_file(path, instr, file_types)
+            if path_to_audio_file is None:
+                if instr in required_mixture_sources:
+                    return path, None
                 if should_print:
                     print('Cant find file "{}" in folder {}'.format(instr, path))
                 continue
-            lengths_arr.append(length)
+            lengths_arr.append(sf.info(path_to_audio_file).frames)
 
     if not lengths_arr:
         return path, None
@@ -479,10 +532,28 @@ class MSSDataset(torch.utils.data.Dataset):
         self.single_target_from_mixture = bool(
             cfg_get(config.training, 'single_target_from_mixture', False)
         )
+        # Type 6 can optionally keep target-absent mixtures as negatives.
+        # Default to the historical behavior for compatibility; positive-only
+        # target datasets can set this explicitly to False.
+        self.allow_missing_target = bool(
+            cfg_get(
+                config.training,
+                'allow_missing_target',
+                self.single_target_from_mixture,
+            )
+        )
+        self.mixture_source_instruments = cfg_get(
+            config.training, 'mixture_source_instruments', []
+        ) or []
+        if isinstance(self.mixture_source_instruments, str):
+            self.mixture_source_instruments = [self.mixture_source_instruments]
+        else:
+            self.mixture_source_instruments = list(self.mixture_source_instruments)
         if self.single_target_from_mixture:
-            if self.dataset_type != 6:
+            if self.dataset_type not in [5, 6]:
                 raise ValueError(
-                    'training.single_target_from_mixture is supported only for dataset_type=6'
+                    'training.single_target_from_mixture is supported only for '
+                    'dataset_type=5 or 6'
                 )
             target_instrument = cfg_get(config.training, 'target_instrument', None)
             if not target_instrument or target_instrument not in self.instruments:
@@ -610,6 +681,8 @@ class MSSDataset(torch.utils.data.Dataset):
                 cfg_get(self.config.training, 'target_instrument', '')
             ),
         }
+        if self.dataset_type == 6:
+            payload['allow_missing_target'] = self.allow_missing_target
         if self.dataset_type == 8:
             payload.update({
                 'reverb_auto_sources': self.reverb_auto_sources,
@@ -732,7 +805,11 @@ class MSSDataset(torch.utils.data.Dataset):
             res, mix = self.load_reverb_data()
         elif self.dataset_type == 5:
             track_path, offset = self.chunks_metadata[index]
-            res = self._load_chunk_by_offset(track_path, offset)
+            loaded_chunk = self._load_chunk_by_offset(track_path, offset)
+            if self.single_target_from_mixture:
+                res, mix = loaded_chunk
+            else:
+                res = loaded_chunk
         elif self.dataset_type in [1, 2, 3]:
             res = self.load_random_mix()
         else:  # type 4 or 6
@@ -760,7 +837,9 @@ class MSSDataset(torch.utils.data.Dataset):
                     )
                     loud_values = torch.tensor(loud_values, dtype=torch.float32)
                     res *= loud_values[:, None, None]
-        if self.dataset_type not in [6, 7, 8]:
+        if self.dataset_type not in [6, 7, 8] and not (
+            self.dataset_type == 5 and self.single_target_from_mixture
+        ):
             mix = res.sum(0)
 
         if self.aug:
@@ -976,7 +1055,14 @@ class MSSDataset(torch.utils.data.Dataset):
             'chunk_size': self.chunk_size,
             'min_mean_abs': self.min_mean_abs,
             'instruments': sorted(self.instruments),
+            'metadata_instruments': self._metadata_instruments(),
+            'single_target_from_mixture': self.single_target_from_mixture,
+            'target_instrument': str(
+                cfg_get(self.config.training, 'target_instrument', '')
+            ),
         }
+        if self.dataset_type == 6:
+            current_config['allow_missing_target'] = self.allow_missing_target
         if self.dataset_type == 8:
             current_config['reverb_sources'] = (
                 'all'
@@ -993,8 +1079,17 @@ class MSSDataset(torch.utils.data.Dataset):
                 config_matches = (
                         cached_config.get('chunk_size') == current_config['chunk_size'] and
                         cached_config.get('min_mean_abs') == current_config['min_mean_abs'] and
-                        cached_config.get('instruments') == current_config['instruments']
+                        cached_config.get('instruments') == current_config['instruments'] and
+                        cached_config.get('metadata_instruments') == current_config['metadata_instruments'] and
+                        cached_config.get('single_target_from_mixture') == current_config['single_target_from_mixture'] and
+                        cached_config.get('target_instrument') == current_config['target_instrument']
                 )
+                if self.dataset_type == 6:
+                    config_matches = (
+                        config_matches
+                        and cached_config.get('allow_missing_target')
+                        == current_config['allow_missing_target']
+                    )
                 if self.dataset_type == 8:
                     config_matches = (
                         config_matches
@@ -1183,7 +1278,7 @@ class MSSDataset(torch.utils.data.Dataset):
                         return False
                 return found_any and np.abs(dry_mix).mean() >= self.min_mean_abs
 
-            for instrument in self.instruments:
+            for instrument in self._metadata_instruments() or self.instruments:
                 instrument_loud_enough = False
                 for extension in self.file_types:
                     path_to_audio_file = track_path + '/{}.{}'.format(instrument, extension)
@@ -1281,7 +1376,8 @@ class MSSDataset(torch.utils.data.Dataset):
                             self.file_types,
                             self.dataset_type,
                             self.reverb_excluded_instruments if self.dataset_type == 8 else None,
-                            self.single_target_from_mixture,
+                            self.allow_missing_target,
+                            self.mixture_source_instruments,
                         )
                     )
                     if track_length is not None:
@@ -1303,7 +1399,8 @@ class MSSDataset(torch.utils.data.Dataset):
                                 if self.dataset_type == 8
                                 else None
                             ),
-                            itertools.repeat(self.single_target_from_mixture),
+                            itertools.repeat(self.allow_missing_target),
+                            itertools.repeat(self.mixture_source_instruments),
                         )
                     ]
 
@@ -1506,25 +1603,24 @@ class MSSDataset(torch.utils.data.Dataset):
                 res[i] = self.augm_data(res[i], instr)
 
         res = torch.tensor(res, dtype=torch.float32)
-        if self.dataset_type != 6:
+        if self.dataset_type != 6 and not (
+            self.dataset_type == 5 and self.single_target_from_mixture
+        ):
             return res
 
-        mix = None
-        for extension in self.file_types:
-            path_to_mix_file = f"{track_path}/mixture.{extension}"
-            if not os.path.isfile(path_to_mix_file):
-                continue
-            try:
-                mix = load_chunk(
-                    path_to_mix_file,
-                    track_length,
-                    self.chunk_size,
-                    offset=offset,
-                )
-            except Exception as e:
-                if should_print:
-                    print('Error loading mix: {} Path: {}'.format(e, path_to_mix_file))
-            break
+        try:
+            mix = load_track_mixture_chunk(
+                track_path,
+                track_length,
+                self.chunk_size,
+                offset,
+                self.file_types,
+                self.mixture_source_instruments,
+            )
+        except Exception as e:
+            if should_print:
+                print('Error loading mix: {} Path: {}'.format(e, track_path))
+            mix = None
 
         if mix is None:
             mix = res.sum(0).numpy()
@@ -1571,19 +1667,31 @@ class MSSDataset(torch.utils.data.Dataset):
                         not self.single_target_from_mixture
                         or i == self.config.training.target_instrument
                     )
-                    if check_loudness and np.abs(source).mean() < self.min_mean_abs:  # remove quiet chunks
+                    missing_requested_target = (
+                        self.single_target_from_mixture
+                        and i == self.config.training.target_instrument
+                        and not found
+                    )
+                    if (
+                        check_loudness
+                        and not missing_requested_target
+                        and np.abs(source).mean() < self.min_mean_abs
+                    ):  # remove quiet chunks, except explicit target-absent negatives
                         silent_chunks += 1
 
-                mix = None
-                for extension in self.file_types:
-                    path_to_mix_file = track_path + '/mixture.{}'.format(extension)
-                    if os.path.isfile(path_to_mix_file):
-                        try:
-                            mix = load_chunk(path_to_mix_file, track_length, self.chunk_size, offset=common_offset)
-                        except Exception as e:
-                            if should_print:
-                                print('Error loading mix: {} Path: {}'.format(e, path_to_mix_file))
-                        break
+                try:
+                    mix = load_track_mixture_chunk(
+                        track_path,
+                        track_length,
+                        self.chunk_size,
+                        common_offset,
+                        self.file_types,
+                        self.mixture_source_instruments,
+                    )
+                except Exception as e:
+                    if should_print:
+                        print('Error loading mix: {} Path: {}'.format(e, track_path))
+                    mix = None
 
                 if silent_chunks == 0:
                     break

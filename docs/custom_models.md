@@ -1,8 +1,9 @@
 # Custom models
 
-MSST supports additional model types through a process-local registry. An
-extension registers a PyTorch module under a model name before invoking an MSST
-workflow that constructs the model.
+MSST supports additional model types through a model registry. Python
+applications can register a PyTorch module directly; installable extension
+packages can declare an entry point so MSST discovers the model by name in
+training, validation, and inference workflows.
 
 ## Model interface
 
@@ -35,11 +36,31 @@ msst.train(
 )
 ```
 
-The registration is available in the current Python process. A separately
-installed extension package can expose the same class and registration call;
-the class must be importable before invoking MSST. Training uses the configured
-MSST dataset layout and runs validation after every epoch. Dataset structures
-are described in [Dataset formats](dataset_types.md).
+The registration is available in the current Python process. Training uses the
+configured MSST dataset layout and runs validation after every epoch. Dataset
+structures are described in [Dataset formats](dataset_types.md).
+
+## Installable model plugins
+
+To make a model available by a short name in fresh MSST CLI and API processes,
+publish it as a Python package and declare an entry point in its `pyproject.toml`:
+
+```toml
+[project.entry-points."msst.models"]
+tiny_separator = "my_separator.model:TinySeparator"
+```
+
+The target may be an `MSSTBaseModel` subclass or a model factory accepted by
+`msst.register_model()`. Install the extension package in the same environment
+as MSST, then select `tiny_separator` with `--model_type` or
+`training.model_type`. MSST lists installed entry point names without importing
+their code and imports the selected model only when it is constructed. In
+distributed training, install the extension and its dependencies on every
+worker.
+
+Entry point names use the same rules as directly registered names; built-in
+model names are reserved. Entry points execute Python code when selected, so
+only install model packages you trust.
 
 ## Configuration
 

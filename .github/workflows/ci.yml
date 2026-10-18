@@ -2,7 +2,7 @@ name: Python package CI
 
 "on":
   push:
-    branches: [main]
+    branches: [main, msst-package]
   pull_request:
 
 permissions:
@@ -25,10 +25,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --editable ".[test]"
-      - name: Test stable public API
+      - name: Test public API, plugins, and keyed validation reports
         run: |
           python -m mypy
-          python -m pytest tests/test_public_api.py -q
+          python -m pytest tests/test_public_api.py tests/test_model_plugins.py tests/test_validation_manifest.py tests/test_validation_track_csv.py -q
 
   distribution:
     name: Build and inspect distribution

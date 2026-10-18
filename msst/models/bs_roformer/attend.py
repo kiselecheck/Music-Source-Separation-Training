@@ -86,6 +86,26 @@ class Attend(nn.Module):
             default_scale = q.shape[-1] ** -0.5
             q = q * (self.scale / default_scale)
 
+        if is_cuda and not self.training and sdpa_kernel is not None:
+            preferred_backends = [
+                backend
+                for backend in (
+                    getattr(SDPBackend, "CUDNN_ATTENTION", None),
+                    SDPBackend.FLASH_ATTENTION,
+                    SDPBackend.EFFICIENT_ATTENTION,
+                    SDPBackend.MATH,
+                )
+                if backend is not None
+            ]
+            try:
+                context = sdpa_kernel(preferred_backends, set_priority=True)
+            except TypeError:  # PyTorch versions before priority ordering was added.
+                context = sdpa_kernel(preferred_backends)
+            with context:
+                return F.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self.dropout if self.training else 0.0
+                )
+
         # Check if there is a compatible device for flash attention
 
         config = self.cuda_config if is_cuda else self.cpu_config

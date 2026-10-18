@@ -56,6 +56,7 @@ Important options:
 | `--store_dir` | Output root for separated stems. |
 | `--device_ids` | One or more CUDA device indices. |
 | `--force_cpu` | Ignore CUDA and use CPU. |
+| `--compile` | Use `torch.compile` for single-GPU CUDA inference; initial compilation can add startup time. |
 | `--use_tta` | Enable test-time augmentation. |
 | `--flac_file` | Write FLAC instead of WAV. |
 | `--pcm_type` | Select the output subtype. |
@@ -84,9 +85,34 @@ msst valid \
 `--valid_path` accepts one or more roots. `--device_ids` accepts multiple
 indices for parallel validation. `--store_dir` is optional; when omitted, the
 command computes metrics without retaining separated stems.
+Pass `--compile` to compile the model for single-GPU CUDA validation. It is
+ignored on CPU and multi-GPU runs.
 
 Supported metric names are listed by the command help and exposed in Python as
 `msst.SUPPORTED_VALIDATION_METRICS`.
+
+To evaluate a fixed list of full tracks, pass `--validation_manifest tracks.csv`.
+The CSV has `key` and `mixture_path` columns; `group` is optional and is copied
+as provided rather than inferred from directory names. `mixture_path` may point
+to an audio file, or to a track directory when the config lists its component
+stems in `training.mixture_source_instruments`:
+
+```csv
+key,mixture_path,group
+musdb/track_a,datasets/test/track_a/mixture.wav,regular
+musdb/track_b,datasets/test/track_b/mixture.wav,hard
+```
+
+Relative mixture paths resolve from the CSV's directory and must lie under a
+`--valid_path` root. The key identifies the track in reports. Add
+`--track_csv_path results/tracks.csv` to save one row per track and instrument,
+including the requested metrics and elapsed wall time. Repeating the same
+checkpoint, epoch, mixture, and instrument updates its existing row; new
+metric columns are retained across runs.
+
+Training accepts the same manifest. `--validation_track_csv` writes keyed
+per-track scores to `validation_metrics_by_track.csv` in `--results_path` after
+each epoch. `--track_csv_path` selects a different report path.
 
 ## Training
 

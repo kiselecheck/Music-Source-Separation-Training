@@ -40,6 +40,7 @@ from msst.utils.audio_utils import denormalize_audio, draw_spectrogram, normaliz
 from msst.utils.model_utils import (
     apply_tta,
     bigshifts_wrapper,
+    compile_model,
     load_start_checkpoint,
     prefer_target_instrument,
 )
@@ -271,6 +272,11 @@ def load_separator(
             f"{type(error).__name__}: {detail}"
         ) from error
     model.eval()
+    if args.compile:
+        if device.type != "cuda" or isinstance(model, nn.DataParallel):
+            print("Warning: --compile requires a single CUDA device; ignoring it")
+        else:
+            model = compile_model(model)
     print("Instruments:", config.training.instruments)
     print(f"Model load time: {time.time() - started:.2f} sec")
     return model, config, device

@@ -106,9 +106,23 @@ training:
 ```
 
 With this option, metadata contains only folders where `target_instrument`
-exists. Missing non-target stems (such as `other`) are allowed, the model input
-is read from `mixture.wav`/`mixture.flac`, and the loss is computed only for the
-configured target. Use this option with dataset type 6.
+exists by default. Missing non-target stems (such as `other`) are allowed, the
+model input is read from the configured mixture, and the loss is computed only
+for the configured target. This option is supported by dataset types 5 and 6.
+Type 5 returns aligned precomputed chunks; type 6 samples aligned chunks from
+full tracks.
+
+For datasets without a stored mixture, set `training.mixture_source_instruments`
+to the names of the component stem files that should be summed. On dataset type
+6, target-absent tracks can be retained as negative examples with
+`training.allow_missing_target: true`; their target is zero-filled while the
+mixture remains the input. Set it to `false` for target-positive-only training.
+
+Chunk filtering uses `audio.min_mean_abs`. On dataset type 6,
+`training.precompute_chunks: true` builds a random chunk pool when this threshold
+is greater than zero. `training.num_precompute_chunks` sets its size; if omitted,
+it is derived from `num_steps`, batch size, and epoch count. Dataset type 5
+continues to index the chunks already stored in its source dataset.
 
 
 ### Type 7 (Class-Balanced Aligned Dataset)

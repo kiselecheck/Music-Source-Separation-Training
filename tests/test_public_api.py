@@ -304,6 +304,14 @@ def test_inference_config_cannot_be_mixed_with_overrides():
         proc_folder(config, force_cpu=True)
 
 
+def test_inference_config_passes_compile_to_legacy_runtime():
+    config = InferenceConfig(
+        "config.yaml", "model.ckpt", "input", "output", compile=True
+    )
+
+    assert config.to_legacy_args()["compile"] is True
+
+
 def test_inference_config_validates_combinations():
     with pytest.raises(ValueError, match="bigshifts"):
         InferenceConfig("config.yaml", "model.ckpt", "input", "output", bigshifts=0)
@@ -422,8 +430,11 @@ def test_validation_exposes_typed_keyword_api(monkeypatch, tmp_path):
         device_ids=(0, 1),
         metrics=("sdr", "k_sdr", "sdr"),
         output_folder=tmp_path / "output",
+        validation_manifest=tmp_path / "tracks.csv",
+        track_csv_path=tmp_path / "track_metrics.csv",
         extension=".flac",
         force_cpu=True,
+        compile=True,
         verbose=True,
     )
 
@@ -442,8 +453,11 @@ def test_validation_exposes_typed_keyword_api(monkeypatch, tmp_path):
             "model_type": "bs_roformer",
             "device_ids": [0, 1],
             "force_cpu": True,
+            "compile": True,
             "metrics": ["sdr", "k_sdr"],
             "store_dir": str(tmp_path / "output"),
+            "validation_manifest": str(tmp_path / "tracks.csv"),
+            "track_csv_path": str(tmp_path / "track_metrics.csv"),
             "extension": "flac",
             "use_tta": False,
             "draw_spectro": 0,
@@ -488,8 +502,11 @@ def test_validation_config_translates_defaults():
         "model_type": "mdx23c",
         "device_ids": [0],
         "force_cpu": False,
+        "compile": False,
         "metrics": ["sdr"],
         "store_dir": "",
+        "validation_manifest": "",
+        "track_csv_path": "",
         "extension": "wav",
         "use_tta": False,
         "draw_spectro": 0,

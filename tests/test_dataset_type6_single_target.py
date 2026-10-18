@@ -12,7 +12,7 @@ def _write_audio(path: Path, value: float, frames: int = 4096) -> None:
     sf.write(path, audio, 44100, subtype="FLOAT")
 
 
-def test_single_target_from_explicit_mixture_filters_sparse_tracks(
+def test_single_target_from_explicit_mixture_includes_targetless_hard_negatives(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     silent_target = tmp_path / "silent_target"
@@ -57,6 +57,7 @@ def test_single_target_from_explicit_mixture_filters_sparse_tracks(
     assert [Path(track).name for track, _ in dataset.metadata] == [
         "silent_target",
         "with_target",
+        "without_target",
     ]
 
     choices = iter(dataset.metadata)
@@ -74,3 +75,99 @@ def test_single_target_from_explicit_mixture_filters_sparse_tracks(
     precomputed_target, precomputed_mixture = dataset[0]
     np.testing.assert_allclose(precomputed_target.numpy(), 0.1, atol=1e-6)
     np.testing.assert_allclose(precomputed_mixture.numpy(), 0.3, atol=1e-6)
+
+
+def test_single_target_from_explicit_mixture_uses_zeros_for_hard_negative(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    hard_negative = tmp_path / "hard_negative"
+    hard_negative.mkdir()
+    _write_audio(hard_negative / "mixture.wav", 0.4)
+    _write_audio(hard_negative / "bass.wav", 0.2)
+
+    config = ConfigDict(
+        {
+            "audio": {"chunk_size": 2048, "min_mean_abs": 0.05, "sample_rate": 44100},
+            "training": {
+                "batch_size": 1,
+                "num_steps": 1,
+                "instruments": ["synth_bass", "other"],
+                "target_instrument": "synth_bass",
+                "single_target_from_mixture": True,
+                "precompute_chunks": False,
+                "read_metadata_procs": 1,
+            },
+            "augmentations": {"enable": False},
+        }
+    )
+
+    dataset = MSSDataset(
+        config,
+        str(tmp_path),
+        metadata_path=str(tmp_path / "metadata.pkl"),
+        dataset_type=6,
+        batch_size=1,
+        verbose=False,
+    )
+    assert dataset.metadata == [(str(hard_negative), 4096)]
+    monkeypatch.setattr(
+        "msst.utils.dataset.random.choice",
+        lambda _: dataset.metadata[0],
+    )
+
+    target, mixture = dataset[0]
+    assert target.shape == (1, 2, 2048)
+    np.testing.assert_array_equal(target.numpy(), 0.0)
+    np.testing.assert_allclose(mixture.numpy(), 0.4, atol=1e-6)
+    assert "Attempts max!" not in capsys.readouterr().out
+
+
+def test_single_target_from_mixture_builds_missing_mixture_from_source_stems(
+    tmp_path: Path, monkeypatch
+) -> None:
+    musdb_track = tmp_path / "ordinary_bass_track"
+    musdb_track.mkdir()
+    source_values = {"bass": 0.1, "drums": 0.2, "other": 0.3, "vocals": 0.4}
+    for instrument, value in source_values.items():
+        _write_audio(musdb_track / f"{instrument}.wav", value)
+
+    config = ConfigDict(
+        {
+            "audio": {"chunk_size": 2048, "min_mean_abs": 0.05, "sample_rate": 44100},
+            "training": {
+                "batch_size": 1,
+                "num_steps": 1,
+                "instruments": ["synth_bass", "other"],
+                "target_instrument": "synth_bass",
+                "single_target_from_mixture": True,
+                "mixture_source_instruments": list(source_values),
+                "precompute_chunks": False,
+                "read_metadata_procs": 1,
+            },
+            "augmentations": {"enable": False},
+        }
+    )
+
+    dataset = MSSDataset(
+        config,
+        str(tmp_path),
+        metadata_path=str(tmp_path / "metadata_musdb.pkl"),
+        dataset_type=6,
+        batch_size=1,
+        verbose=False,
+    )
+    assert dataset.metadata == [(str(musdb_track), 4096)]
+    monkeypatch.setattr(
+        "msst.utils.dataset.random.choice",
+        lambda _: dataset.metadata[0],
+    )
+
+    target, mixture = dataset[0]
+    np.testing.assert_array_equal(target.numpy(), 0.0)
+    np.testing.assert_allclose(mixture.numpy(), sum(source_values.values()), atol=1e-6)
+
+    dataset.chunks_metadata = [(str(musdb_track), 0)]
+    dataset.do_chunks = True
+    chunk_target, chunk_mixture = dataset[0]
+    np.testing.assert_array_equal(chunk_target.numpy(), 0.0)
+    np.testing.assert_allclose(chunk_mixture.numpy(), sum(source_values.values()), atol=1e-6)

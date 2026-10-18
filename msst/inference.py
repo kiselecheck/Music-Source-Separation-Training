@@ -145,6 +145,7 @@ class InferenceConfig:
     model_type: str = "mdx23c"
     device_ids: DeviceIds = 0
     force_cpu: bool = False
+    compile: bool = False
     use_tta: bool = False
     bigshifts: int = 1
     extract_instrumental: bool = False
@@ -201,6 +202,7 @@ class Separator:
         model_type: str = "mdx23c",
         device_ids: DeviceIds = 0,
         force_cpu: bool = False,
+        compile: bool = False,
         use_tta: bool = False,
         bigshifts: int = 1,
         extract_instrumental: bool = False,
@@ -217,6 +219,7 @@ class Separator:
             "model_type": model_type,
             "device_ids": _device_ids(device_ids),
             "force_cpu": force_cpu,
+            "compile": compile,
             "use_tta": use_tta,
             "bigshifts": bigshifts,
             "extract_instrumental": extract_instrumental,
@@ -410,6 +413,7 @@ def inference(
     model_type: str = "mdx23c",
     device_ids: DeviceIds = 0,
     force_cpu: bool = False,
+    compile: bool = False,
     use_tta: bool = False,
     bigshifts: int = 1,
     extract_instrumental: bool = False,
@@ -441,6 +445,7 @@ def inference(
         "model_type": model_type,
         "device_ids": device_ids,
         "force_cpu": force_cpu,
+        "compile": compile,
         "use_tta": use_tta,
         "bigshifts": bigshifts,
     }
@@ -456,6 +461,7 @@ def inference(
             model_type=model_type,
             device_ids=device_ids,
             force_cpu=force_cpu,
+            compile=compile,
             use_tta=use_tta,
             bigshifts=bigshifts,
             extract_instrumental=extract_instrumental,

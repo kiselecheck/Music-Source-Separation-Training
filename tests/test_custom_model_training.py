@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ import pytest
 import soundfile as sf
 import torch
 import wandb
+import yaml
 from ml_collections import ConfigDict
 
 import msst
@@ -104,8 +106,18 @@ def test_custom_model_trains_one_epoch_and_runs_validation(
     assert np.isfinite(all_losses["epoch_0"][0])
     assert not torch.equal(before, next(model.parameters()).detach())
 
+    manifest_path = tmp_path / "validation_tracks.csv"
+    manifest_path.write_text(
+        "key,mixture_path,group\n"
+        "toy/toy_track,valid/toy_track/mixture.wav,smoke\n",
+        encoding="utf-8",
+    )
+    track_csv_path = tmp_path / "track_metrics.csv"
+
     validation_args = SimpleNamespace(
         valid_path=[str(tmp_path / "valid")],
+        validation_manifest=str(manifest_path),
+        track_csv_path=str(track_csv_path),
         metrics=["sdr"],
         model_type=MODEL_NAME,
         use_tta=False,
@@ -120,3 +132,36 @@ def test_custom_model_trains_one_epoch_and_runs_validation(
     assert set(all_metrics["sdr"]) == {"vocals", "other"}
     assert all(len(all_metrics["sdr"][stem]) == 1 for stem in ("vocals", "other"))
     assert np.isfinite(metric_avg["sdr"])
+    with track_csv_path.open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.DictReader(csv_file))
+    assert {row["instrument"] for row in rows} == {"vocals", "other"}
+    assert {row["track_key"] for row in rows} == {"toy/toy_track"}
+    assert {row["validation_group"] for row in rows} == {"smoke"}
+    assert all(float(row["elapsed_seconds"]) > 0 for row in rows)
+
+    config_path = tmp_path / "tiny_config.yaml"
+    config_path.write_text(yaml.safe_dump(config.to_dict()), encoding="utf-8")
+    checkpoint_path = tmp_path / "tiny_checkpoint.ckpt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
+    public_csv_path = tmp_path / "public_track_metrics.csv"
+
+    result = msst.valid(
+        config_path=config_path,
+        checkpoint_path=checkpoint_path,
+        valid_path=tmp_path / "valid",
+        model_type=MODEL_NAME,
+        force_cpu=True,
+        metrics=("sdr",),
+        validation_manifest=manifest_path,
+        track_csv_path=public_csv_path,
+    )
+
+    assert np.isfinite(result.averages["sdr"])
+    assert set(result.per_track["sdr"]) == {"vocals", "other"}
+    with public_csv_path.open(newline="", encoding="utf-8") as csv_file:
+        public_rows = list(csv.DictReader(csv_file))
+    assert len(public_rows) == 2
+    assert {row["checkpoint_path"] for row in public_rows} == {
+        str(checkpoint_path)
+    }
+    assert {row["track_key"] for row in public_rows} == {"toy/toy_track"}

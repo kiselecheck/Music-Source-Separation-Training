@@ -2,9 +2,11 @@
 __author__ = 'Roman Solovyev (ZFTurbo): https://github.com/ZFTurbo/'
 
 import argparse
+import csv
 import math
 import time
 import os
+import tempfile
 import gc
 import glob
 import torch
@@ -18,10 +20,18 @@ import torch.distributed as dist
 from pathlib import Path
 from collections.abc import Mapping
 from msst._inference import resolve_device, validate_checkpoint_metadata
+from msst.inference import SUPPORTED_AUDIO_EXTENSIONS
+from msst._validation_manifest import ValidationTrack, load_validation_manifest
 from msst.utils.settings import get_model_from_config, logging, write_results_in_file, parse_args_valid
 from msst.utils.audio_utils import normalize_audio, denormalize_audio, read_audio_transposed, \
     draw_2_mel_spectrogram
-from msst.utils.model_utils import demix, prefer_target_instrument, apply_tta, load_start_checkpoint
+from msst.utils.model_utils import (
+    apply_tta,
+    compile_model,
+    demix,
+    load_start_checkpoint,
+    prefer_target_instrument,
+)
 from msst.utils.metrics import get_metrics
 
 def _cfg_get(section, key, default=None):
@@ -41,6 +51,18 @@ def _as_list(value):
     if isinstance(value, (list, tuple)):
         return list(value)
     return [value]
+
+
+def _audio_file_extensions(preferred: Optional[str] = None) -> List[str]:
+    """Return supported audio extensions, preferring a configured suffix."""
+
+    extensions = [extension.lstrip(".").lower() for extension in SUPPORTED_AUDIO_EXTENSIONS]
+    if preferred:
+        preferred = str(preferred).lstrip(".").lower()
+        if preferred in extensions:
+            extensions.remove(preferred)
+        extensions.insert(0, preferred)
+    return extensions
 
 
 def _validation_mixture_names(config: ConfigDict) -> List[str]:
@@ -64,11 +86,154 @@ def _validation_mixture_names(config: ConfigDict) -> List[str]:
     return deduped
 
 
+def write_validation_track_metrics_csv(
+    results_path: str,
+    epoch: Optional[int],
+    per_track_metrics: Dict[str, Dict[str, Dict[str, float]]],
+    *,
+    output_path: Optional[str] = None,
+    track_info: Optional[Dict[str, ValidationTrack]] = None,
+    valid_paths: Optional[List[str]] = None,
+    checkpoint_path: str = "",
+) -> str:
+    """Write one row per track and stem, replacing an already recorded run key.
+
+    A resumed epoch updates its old rows. Existing metric columns are preserved
+    when a later run requests a different set of metrics.
+    """
+    destination = (
+        Path(output_path) if output_path else Path(results_path) / "validation_metrics_by_track.csv"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    base_fields = [
+        "epoch", "checkpoint_path", "validation_group", "track_key",
+        "track_id", "mixture_path", "instrument",
+    ]
+    metric_names = {
+        metric_name
+        for instruments in per_track_metrics.values()
+        for values in instruments.values()
+        for metric_name in values
+    }
+    existing_fields = []
+    existing_rows = []
+    if destination.is_file() and destination.stat().st_size:
+        with destination.open("r", newline="", encoding="utf-8-sig") as csv_file:
+            reader = csv.DictReader(csv_file)
+            existing_fields = reader.fieldnames or []
+            if not {"epoch", "mixture_path", "instrument"}.issubset(existing_fields):
+                raise ValueError(f"Invalid validation track CSV header: {destination}")
+            existing_rows = list(reader)
+
+    other_fields = (set(existing_fields) | metric_names) - set(base_fields)
+    fields = [*base_fields, *sorted(other_fields)]
+    keyed_rows = {}
+    for row in existing_rows:
+        mixture_path = row.get("mixture_path", "")
+        if mixture_path:
+            mixture_path = os.path.abspath(mixture_path)
+            row["mixture_path"] = mixture_path
+            row["track_key"] = row.get("track_key") or _default_track_key(
+                mixture_path, valid_paths
+            )
+        key = (
+            row.get("epoch", ""), row.get("checkpoint_path", ""),
+            mixture_path, row.get("instrument", ""),
+        )
+        keyed_rows[key] = row
+
+    epoch_value = "" if epoch is None else str(epoch)
+    track_info = track_info or {}
+    for mixture_path, instruments in per_track_metrics.items():
+        absolute_path = os.path.abspath(mixture_path)
+        info = track_info.get(mixture_path) or track_info.get(absolute_path)
+        track_key = info.key if info else _default_track_key(absolute_path, valid_paths)
+        group = info.group if info else ""
+        for instrument, values in instruments.items():
+            row = {
+                "epoch": epoch_value,
+                "checkpoint_path": checkpoint_path,
+                "validation_group": group,
+                "track_key": track_key,
+                "track_id": (
+                    Path(absolute_path).name
+                    if Path(absolute_path).is_dir()
+                    else Path(absolute_path).parent.name
+                ),
+                "mixture_path": absolute_path,
+                "instrument": instrument,
+                **values,
+            }
+            keyed_rows[(epoch_value, checkpoint_path, absolute_path, instrument)] = row
+
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", newline="", encoding="utf-8", delete=False,
+            dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp",
+        ) as csv_file:
+            temporary_path = Path(csv_file.name)
+            writer = csv.DictWriter(csv_file, fieldnames=fields, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(keyed_rows.values())
+        os.replace(temporary_path, destination)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+    return str(destination)
+
+
+def _default_track_key(mixture_path: str, valid_paths: Optional[List[str]]) -> str:
+    track_path = Path(os.path.abspath(mixture_path))
+    track_folder = track_path if track_path.is_dir() else track_path.parent
+    roots = sorted(
+        (Path(os.path.abspath(root)) for root in (valid_paths or [])),
+        key=lambda root: len(root.parts), reverse=True,
+    )
+    for root in roots:
+        if track_folder.is_relative_to(root):
+            relative = track_folder.relative_to(root)
+            return f"{root.name}/{relative.as_posix()}" if relative.parts else root.name
+    return track_folder.as_posix()
+
+
+def _save_track_csv(args, epoch, per_track_metrics, manifest_tracks):
+    csv_path = write_validation_track_metrics_csv(
+        getattr(args, "results_path", ""), epoch, per_track_metrics,
+        output_path=getattr(args, "track_csv_path", "") or None,
+        track_info=manifest_tracks,
+        valid_paths=_as_list(getattr(args, "valid_path", None)),
+        checkpoint_path=(
+            str(getattr(args, "start_check_point", "")) if epoch is None else ""
+        ),
+    )
+    print(f"Saved per-track validation metrics: {csv_path}")
+
+
+def _mixture_source_instruments(config: ConfigDict) -> List[str]:
+    training = getattr(config, "training", None)
+    if training is None and isinstance(config, dict):
+        training = config.get("training", None)
+    return [
+        str(name)
+        for name in _as_list(_cfg_get(training, "mixture_source_instruments", None))
+    ]
+
+
+def _validation_manifest_for_args(args) -> Optional[Dict[str, ValidationTrack]]:
+    manifest_path = getattr(args, "validation_manifest", "")
+    if not manifest_path:
+        return None
+    valid_paths = _as_list(getattr(args, "valid_path", None))
+    return load_validation_manifest(manifest_path, valid_paths)
+
+
 def get_mixture_paths(
     args: argparse.Namespace,
     verbose: bool,
     config: ConfigDict,
-    extension: str
+    extension: str,
+    manifest_tracks: Optional[Dict[str, ValidationTrack]] = None,
 ) -> List[str]:
     """
     Collect validation mixture file paths from one or more root directories.
@@ -111,22 +276,45 @@ def get_mixture_paths(
 
     mixture_names = _validation_mixture_names(config)
 
+    mixture_sources = _mixture_source_instruments(config)
+
     def find_mixture_files(root_dir):
-        from pathlib import Path
         root_path = Path(root_dir)
         files = []
-        for mixture_name in mixture_names:
-            files.extend(root_path.rglob(f"{mixture_name}.wav"))
-            files.extend(root_path.rglob(f"{mixture_name}.flac"))
-            if not(extension in ['wav', 'flac']):
-                files.extend(root_path.rglob(f"{mixture_name}.{extension}"))
-        return list(dict.fromkeys(files))
+        extensions = _audio_file_extensions(extension)
+        for folder, subfolders, filenames in os.walk(root_path, followlinks=True):
+            filename_set = set(filenames)
+            has_explicit_mixture = False
+            for mixture_name in mixture_names:
+                for ext in extensions:
+                    candidate_name = f"{mixture_name}.{ext}"
+                    if candidate_name in filename_set:
+                        files.append(str(Path(folder) / candidate_name))
+                        has_explicit_mixture = True
 
-    for root in valid_paths:
-        part = find_mixture_files(root)
-        if not part and verbose and should_print:
-            print(f"No validation data found in: {root}")
-        all_mixtures_path.extend(part)
+            has_composed_mixture = False
+            if not has_explicit_mixture and mixture_sources:
+                has_composed_mixture = all(
+                    any(f"{source}.{ext}" in filename_set for ext in extensions)
+                    for source in mixture_sources
+                )
+                if has_composed_mixture:
+                    files.append(str(Path(folder)))
+
+            if has_explicit_mixture or has_composed_mixture:
+                subfolders[:] = []
+        return sorted(dict.fromkeys(files))
+
+    if manifest_tracks is None:
+        manifest_tracks = _validation_manifest_for_args(args)
+    if manifest_tracks is not None:
+        all_mixtures_path = list(manifest_tracks)
+    else:
+        for root in valid_paths:
+            part = find_mixture_files(root)
+            if not part and verbose and should_print:
+                print(f"No validation data found in: {root}")
+            all_mixtures_path.extend(part)
 
     # --- verbose summary ---
     if verbose and should_print:
@@ -221,6 +409,42 @@ def update_metrics_and_pbar(
             pass
 
 
+def _read_composed_mixture(
+    path: str, config: ConfigDict, preferred_extension: Optional[str] = None
+) -> Tuple[np.ndarray, int]:
+    folder = path
+    source_names = _mixture_source_instruments(config)
+    source_waveforms = []
+    source_rates = []
+    for source_name in source_names:
+        source_path = next(
+            (
+                os.path.join(folder, f"{source_name}.{ext}")
+                for ext in _audio_file_extensions(preferred_extension)
+                if os.path.isfile(os.path.join(folder, f"{source_name}.{ext}"))
+            ),
+            None,
+        )
+        if source_path is None:
+            raise FileNotFoundError(
+                f"Missing mixture component '{source_name}' in {folder}"
+            )
+        source_audio, source_sr = read_audio_transposed(source_path)
+        source_waveforms.append(source_audio)
+        source_rates.append(source_sr)
+
+    if not source_waveforms:
+        raise ValueError("No mixture source instruments configured for composed mixture")
+    if len(set(source_rates)) != 1:
+        raise ValueError(f"Mixture source sample rates differ in {folder}: {source_rates}")
+    common_length = min(waveform.shape[-1] for waveform in source_waveforms)
+    mixture = np.sum(
+        np.stack([waveform[..., :common_length] for waveform in source_waveforms]),
+        axis=0,
+    )
+    return mixture, source_rates[0]
+
+
 def process_audio_files(
     mixture_paths: List[str],
     model: torch.nn.Module,
@@ -228,7 +452,8 @@ def process_audio_files(
     config: ConfigDict,
     device: torch.device,
     verbose: bool = False,
-    is_tqdm: bool = True
+    is_tqdm: bool = True,
+    per_track_metrics: Optional[Dict[str, Dict[str, Dict[str, float]]]] = None,
 ) -> Dict[str, Dict[str, Union[Dict[str, float], List[float]]]]:
     """
     Run source separation on a list of mixtures and collect evaluation metrics.
@@ -294,24 +519,34 @@ def process_audio_files(
         mixture_paths = tqdm(mixture_paths)
 
 
-    def get_instruments(path: str) -> dict[str, str]:
+    def get_instruments(path: str) -> dict[str, Optional[str]]:
         """Detect available instrument files and their extensions."""
         real_instruments: dict[str, str] = {}
 
         for instr in instruments:
             # Check supported extensions for each instrument
-            for ext in [extension, "flac", "wav"]:
+            for ext in _audio_file_extensions(extension):
                 file_path = Path(path) / f"{instr}.{ext}"
                 if file_path.exists():
                     real_instruments[instr] = ext
                     break
+        target_instrument = _cfg_get(config.training, "target_instrument", None)
+        if (
+            target_instrument
+            and _cfg_get(config.training, "single_target_from_mixture", False)
+            and target_instrument not in real_instruments
+        ):
+            real_instruments[target_instrument] = None
 
         return real_instruments
 
 
     for path in mixture_paths:
         start_time = time.time()
-        mix, sr = read_audio_transposed(path)
+        if os.path.isdir(path):
+            mix, sr = _read_composed_mixture(path, config, extension)
+        else:
+            mix, sr = read_audio_transposed(path)
         mix_orig = mix.copy()
         folder = os.path.dirname(path)
         real_instruments = get_instruments(folder)
@@ -345,7 +580,9 @@ def process_audio_files(
                 print(f"Instr: {instr}")
 
             # read GT track
-            if instr != 'other' or not getattr(config.training, 'other_fix', False):
+            if extension is None:
+                track, sr1 = np.zeros_like(mix_orig), sr
+            elif instr != 'other' or not getattr(config.training, 'other_fix', False):
                 track, sr1 = read_audio_transposed(f"{folder}/{instr}.{extension}", instr, skip_err=True)
                 if track is None:
                     continue
@@ -393,6 +630,11 @@ def process_audio_files(
                 device=device,
                 k=k
             )
+            if per_track_metrics is not None:
+                per_track_metrics.setdefault(path, {})[instr] = {
+                    metric_name: float(metric_value)
+                    for metric_name, metric_value in track_metrics.items()
+                }
 
             # --- update metrics + progress ---
             if ddp_mode:
@@ -417,8 +659,12 @@ def process_audio_files(
                     verbose=verbose and should_print
                 )
 
+        elapsed_seconds = time.time() - start_time
+        if per_track_metrics is not None:
+            for values in per_track_metrics.get(path, {}).values():
+                values["elapsed_seconds"] = elapsed_seconds
         if verbose and should_print:
-            print(f"Time for song: {time.time() - start_time:.2f} sec")
+            print(f"Time for song: {elapsed_seconds:.2f} sec")
 
     return all_metrics
 
@@ -515,7 +761,8 @@ def valid(
     args,
     config: ConfigDict,
     device: torch.device,
-    verbose: bool = False
+    verbose: bool = False,
+    epoch: Optional[int] = None,
 ) -> Tuple[dict, dict]:
     """
     Validate a trained model on a set of audio mixtures and compute metrics.
@@ -553,8 +800,20 @@ def valid(
     else:
         extension = getattr(args, 'extension', 'wav')
 
-    all_mixtures_path = get_mixture_paths(args, verbose, config, extension)
-    all_metrics = process_audio_files(all_mixtures_path, model, args, config, device, verbose, not verbose)
+    manifest_tracks = _validation_manifest_for_args(args)
+    all_mixtures_path = get_mixture_paths(
+        args, verbose, config, extension, manifest_tracks=manifest_tracks
+    )
+    csv_requested = bool(getattr(args, "track_csv_path", "")) or (
+        getattr(args, "validation_track_csv", False) and epoch is not None
+    )
+    per_track_metrics = {} if csv_requested else None
+    all_metrics = process_audio_files(
+        all_mixtures_path, model, args, config, device, verbose, not verbose,
+        per_track_metrics=per_track_metrics,
+    )
+    if per_track_metrics is not None:
+        _save_track_csv(args, epoch, per_track_metrics, manifest_tracks)
     instruments = prefer_target_instrument(config)
 
     return compute_metric_avg(store_dir, args, instruments, config, all_metrics, start_time), all_metrics
@@ -608,12 +867,19 @@ def validate_in_subprocess(
         metric: {instr: [] for instr in config.training.instruments}
         for metric in args.metrics
     }
+    per_track_metrics = (
+        {} if getattr(args, "track_csv_path", "") or getattr(args, "validation_track_csv", False)
+        else None
+    )
 
     while True:
         current_step, path = queue.get()
         if path is None:  # check for sentinel value
             break
-        single_metrics = process_audio_files([path], m1, args, config, device, False, False)
+        single_metrics = process_audio_files(
+            [path], m1, args, config, device, False, False,
+            per_track_metrics=per_track_metrics,
+        )
         pbar_dict = {}
         for instr in config.training.instruments:
             for metric_name in all_metrics:
@@ -625,6 +891,8 @@ def validate_in_subprocess(
             progress_bar.set_postfix(pbar_dict)
         # print(f"Inference on process {proc_id}", all_sdr)
     return_dict[proc_id] = all_metrics
+    if per_track_metrics is not None:
+        return_dict[f"tracks_{proc_id}"] = per_track_metrics
     return
 
 
@@ -738,7 +1006,8 @@ def valid_multi_gpu(
     args,
     config: ConfigDict,
     device_ids: Optional[List[int]] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    epoch: Optional[int] = None,
 ) -> Tuple[Dict[str, float], Dict]:
     """
     Validate a separator model across multiple GPUs with a unified API.
@@ -782,7 +1051,13 @@ def valid_multi_gpu(
         else:
             extension = getattr(args, "extension", "wav")
 
-    all_mixtures_path = get_mixture_paths(args, verbose, config, extension)
+    manifest_tracks = _validation_manifest_for_args(args)
+    all_mixtures_path = get_mixture_paths(
+        args, verbose, config, extension, manifest_tracks=manifest_tracks
+    )
+    csv_requested = bool(getattr(args, "track_csv_path", "")) or (
+        getattr(args, "validation_track_csv", False) and epoch is not None
+    )
 
     ddp_mode = dist.is_initialized()
 
@@ -809,9 +1084,11 @@ def valid_multi_gpu(
             for metric in args.metrics
         }
 
+        local_track_metrics = {} if csv_requested else None
         with torch.no_grad():
             single_metrics = process_audio_files(
-                per_rank_data, model, args, config, device, verbose=verbose
+                per_rank_data, model, args, config, device, verbose=verbose,
+                per_track_metrics=local_track_metrics,
             )
             for instr in config.training.instruments:
                 for metric_name in args.metrics:
@@ -840,7 +1117,17 @@ def valid_multi_gpu(
                 cat_vals = torch.cat(gathered_list).tolist()[:num_tracks]
                 all_metrics[metric][instr] = cat_vals
 
+        gathered_tracks = None
+        if local_track_metrics is not None:
+            gathered_tracks = [None] * world_size
+            dist.all_gather_object(gathered_tracks, local_track_metrics)
+
         if dist.get_rank() == 0:
+            if gathered_tracks is not None:
+                per_track_metrics = {}
+                for rank_tracks in gathered_tracks:
+                    per_track_metrics.update(rank_tracks)
+                _save_track_csv(args, epoch, per_track_metrics, manifest_tracks)
             instruments = prefer_target_instrument(config)
             metric_avg = compute_metric_avg(
                 getattr(args, "store_dir", ""),
@@ -859,6 +1146,12 @@ def valid_multi_gpu(
 
     return_dict = torch.multiprocessing.Manager().dict()
     run_parallel_validation(verbose, all_mixtures_path, config, model, device_ids, args, return_dict)
+
+    if csv_requested:
+        per_track_metrics = {}
+        for i in range(len(device_ids)):
+            per_track_metrics.update(return_dict[f"tracks_{i}"])
+        _save_track_csv(args, epoch, per_track_metrics, manifest_tracks)
 
     all_metrics: Dict[str, Dict[str, List[float]]] = {m: {} for m in args.metrics}
     for metric in args.metrics:
@@ -917,8 +1210,15 @@ def check_validation(
         print('CUDA is not available. Run validation on CPU. It will be very slow...')
 
     if device.type == 'cuda' and len(device_ids) > 1:
+        if args.compile:
+            print("Warning: --compile requires a single CUDA device; ignoring it")
         metrics = valid_multi_gpu(model, args, config, device_ids, verbose=args.verbose)
     else:
+        if args.compile:
+            if device.type == "cuda":
+                model = compile_model(model.eval().to(device))
+            else:
+                print("Warning: --compile requires a single CUDA device; ignoring it")
         metrics = valid(model, args, config, device, verbose=args.verbose)
 
     del model

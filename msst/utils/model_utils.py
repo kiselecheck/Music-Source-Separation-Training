@@ -7,6 +7,7 @@ import math
 from numbers import Integral, Real
 import json
 import os
+import shutil
 from datetime import datetime
 import numpy as np
 import torch
@@ -16,6 +17,40 @@ from torch.optim import Adam, AdamW, SGD, RAdam, RMSprop
 from tqdm.auto import tqdm
 from typing import Dict, List, Tuple, Any, Union, Optional, Sequence
 import torch.distributed as dist
+
+
+def compile_model(model: torch.nn.Module) -> torch.nn.Module:
+    """Compile inference modules while sharing graphs across RoFormer blocks."""
+
+    if not hasattr(torch, "compile"):
+        raise RuntimeError("torch.compile requires a PyTorch build that provides it")
+
+    compiler = os.environ.get("CC", "").split()
+    if compiler and shutil.which(compiler[0]) is None:
+        os.environ.pop("CC", None)
+    # Use PyTorch's cache location unless the caller configured one explicitly.
+    os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
+
+    if all(hasattr(model, name) for name in ("layers", "band_split", "mask_estimators")):
+        for layer in model.layers:
+            for block in layer:
+                block.compile(dynamic=False)
+        model.band_split.compile(dynamic=False)
+        for mask_estimator in model.mask_estimators:
+            mask_estimator.compile(dynamic=False)
+        model.compiled_submodules = True
+        return model
+
+    return torch.compile(model, dynamic=False)
+
+
+def is_compiled_model(model: torch.nn.Module) -> bool:
+    """Return whether model or its specialized submodules use torch.compile."""
+
+    return hasattr(model, "_orig_mod") or bool(
+        getattr(model, "compiled_submodules", False)
+    )
+
 
 def bigshifts_wrapper(
     config: ConfigDict,
@@ -185,6 +220,12 @@ def demix(
         if length_init > 2 * border and border > 0:
             mix = nn.functional.pad(mix, (border, border), mode="reflect")
 
+    required_bytes = int((num_instruments + 1) * mix.numel() * mix.element_size() * 1.5)
+    accumulation_device = _get_accumulation_device(device, required_bytes)
+    mix = mix.to(accumulation_device)
+    if mode == 'generic':
+        windowing_array = windowing_array.to(accumulation_device)
+
     batch_size = config.inference.batch_size
     if (
         isinstance(batch_size, bool)
@@ -226,10 +267,14 @@ def demix(
     amp_enabled = bool(use_amp and device_type == "cuda")
     with torch.autocast(device_type=device_type, enabled=amp_enabled):
         with torch.inference_mode():
-            # Initialize result and counter tensors
+            # A single counter is shared by every stem and channel.
             req_shape = (num_instruments,) + mix.shape
-            result = torch.zeros(req_shape, dtype=torch.float32)
-            counter = torch.zeros(req_shape, dtype=torch.float32)
+            result = torch.zeros(
+                req_shape, dtype=torch.float32, device=accumulation_device
+            )
+            counter = torch.zeros(
+                mix.shape[-1], dtype=torch.float32, device=accumulation_device
+            )
 
             i = 0
             batch_data = []
@@ -258,10 +303,16 @@ def demix(
                 # Process batch if it's full or the end is reached
                 if len(batch_data) >= batch_size or i >= mix.shape[1]:
                     arr = torch.stack(batch_data, dim=0)
+                    if is_compiled_model(model) and arr.shape[0] < batch_size:
+                        arr = nn.functional.pad(
+                            arr,
+                            (0, 0, 0, 0, 0, batch_size - arr.shape[0]),
+                        )
                     if active_stem_ids is None:
                         x = model(arr)
                     else:
                         x = model(arr, active_stem_ids=active_stem_ids)
+                    x = x.to(device=accumulation_device, dtype=torch.float32)
 
                     # Architectures without selective output heads still return
                     # every configured stem; retain only the requested target.
@@ -281,11 +332,11 @@ def demix(
 
                     for j, (start, seg_len) in enumerate(batch_locations):
                         if mode == "generic":
-                            result[..., start:start + seg_len] += x[j, ..., :seg_len].cpu() * window[..., :seg_len]
-                            counter[..., start:start + seg_len] += window[..., :seg_len]
+                            result[..., start:start + seg_len] += x[j, ..., :seg_len] * window[..., :seg_len]
+                            counter[start:start + seg_len] += window[:seg_len]
                         else:
-                            result[..., start:start + seg_len] += x[j, ..., :seg_len].cpu()
-                            counter[..., start:start + seg_len] += 1.0
+                            result[..., start:start + seg_len] += x[j, ..., :seg_len]
+                            counter[start:start + seg_len] += 1.0
 
                     batch_data.clear()
                     batch_locations.clear()
@@ -297,7 +348,7 @@ def demix(
                 progress_bar.close()
 
             # Compute final estimated sources
-            estimated_sources = result / counter
+            estimated_sources = result.div_(counter)
             estimated_sources = estimated_sources.cpu().numpy()
             np.nan_to_num(estimated_sources, copy=False, nan=0.0)
 
@@ -323,8 +374,33 @@ def demix(
         return ret_data
 
 
+GPU_ACCUMULATION_MEMORY_FRACTION = 0.5
+
+
+def _get_accumulation_device(
+    device: Union[torch.device, str], required_bytes: int
+) -> torch.device:
+    """Keep overlap-add buffers on CUDA when they fit comfortably."""
+
+    target_device = torch.device(device)
+    if target_device.type != "cuda":
+        return torch.device("cpu")
+    try:
+        free_bytes, _ = torch.cuda.mem_get_info(target_device)
+        available_bytes = (
+            free_bytes
+            + torch.cuda.memory_reserved(target_device)
+            - torch.cuda.memory_allocated(target_device)
+        )
+    except (RuntimeError, AssertionError):
+        return torch.device("cpu")
+    if required_bytes < GPU_ACCUMULATION_MEMORY_FRACTION * available_bytes:
+        return target_device
+    return torch.device("cpu")
+
+
 def initialize_model_and_device(model: torch.nn.Module, device_ids: List[int]) ->\
-        Tuple[Union[torch.device, str], torch.nn.Module]:
+        Tuple[torch.device, torch.nn.Module]:
     """
     Move a model to the correct computation device and wrap with DataParallel if needed.
 
@@ -338,8 +414,8 @@ def initialize_model_and_device(model: torch.nn.Module, device_ids: List[int]) -
             the model will be wrapped with DataParallel.
 
     Returns:
-        Tuple[Union[torch.device, str], torch.nn.Module]: A tuple containing:
-            - The computation device (`torch.device` or "cpu").
+        Tuple[torch.device, torch.nn.Module]: A tuple containing:
+            - The computation device.
             - The model moved to that device (wrapped in DataParallel if applicable).
     """
 
@@ -365,7 +441,7 @@ def initialize_model_and_device(model: torch.nn.Module, device_ids: List[int]) -
             device = torch.device(f'cuda:{device_ids[0]}')
             model = nn.DataParallel(model, device_ids=device_ids).to(device)
     else:
-        device = 'cpu'
+        device = torch.device('cpu')
         model = model.to(device)
         print("CUDA is not available. Running on CPU.")
 
@@ -855,6 +931,9 @@ def bind_lora_to_model(config: Dict[str, Any], model: nn.Module) -> nn.Module:
                         bias=module.bias is not None,
                         **config['lora']
                     )
+                )
+                getattr(parent_module, layer_name).load_state_dict(
+                    module.state_dict(), strict=False
                 )
                 replaced_layers += 1  # Increment the counter
 

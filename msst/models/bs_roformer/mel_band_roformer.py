@@ -713,6 +713,9 @@ class MelBandRoformer(Module):
 
         target_sel = target[:, stem_ids]
 
+        if recon_audio.ndim == 3:  # Single-stem output omits the stem axis.
+            recon_audio = rearrange(recon_audio, 'b s t -> b 1 s t')
+
         loss = F.l1_loss(recon_audio, target_sel)
 
         multi_stft_resolution_loss = 0.

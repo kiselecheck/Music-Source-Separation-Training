@@ -148,3 +148,26 @@ def test_registry_validates_names_and_supports_factory():
 
     built = build_model_from_config(MODEL_NAME, config, pretrained=True)
     assert isinstance(built, TinyExtensionModel)
+
+
+def test_loralib_binding_keeps_original_linear_weights(monkeypatch):
+    import sys
+
+    from msst.utils.model_utils import bind_lora_to_model
+
+    class FakeLoRALinear(nn.Linear):
+        def __init__(self, in_features, out_features, bias=True, r=1):
+            super().__init__(in_features, out_features, bias=bias)
+            self.adapter = nn.Parameter(torch.zeros(r, in_features))
+
+    monkeypatch.setitem(sys.modules, "loralib", SimpleNamespace(Linear=FakeLoRALinear))
+    model = nn.Sequential(nn.Linear(3, 2))
+    with torch.no_grad():
+        model[0].weight.fill_(0.25)
+        model[0].bias.fill_(-0.5)
+
+    bind_lora_to_model({"lora": {"r": 2}}, model)
+
+    assert isinstance(model[0], FakeLoRALinear)
+    torch.testing.assert_close(model[0].weight, torch.full((2, 3), 0.25))
+    torch.testing.assert_close(model[0].bias, torch.full((2,), -0.5))

@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from msst.models.builtin import BUILTIN_MODEL_TYPES
+
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,7 +41,7 @@ def _model_types(settings_path: Path) -> set[str]:
 
 def test_package_registers_the_same_model_families_as_upstream() -> None:
     upstream = _model_types(upstream_root() / "utils" / "settings.py")
-    package = _model_types(PACKAGE_ROOT / "msst" / "utils" / "settings.py")
+    package = set(BUILTIN_MODEL_TYPES)
     assert package == upstream
 
 

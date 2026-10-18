@@ -382,9 +382,11 @@ def compute_epoch_metrics(model: torch.nn.Module, args: argparse.Namespace, conf
     should_print = not dist.is_initialized() or dist.get_rank() == 0
     if not ddp:
         if torch.cuda.is_available() and len(device_ids) > 1:
-            metrics_avg, all_metrics = valid_multi_gpu(model, args, config, args.device_ids, verbose=False)
+            metrics_avg, all_metrics = valid_multi_gpu(
+                model, args, config, args.device_ids, verbose=False, epoch=epoch
+            )
         else:
-            metrics_avg, all_metrics = valid(model, args, config, device, verbose=False)
+            metrics_avg, all_metrics = valid(model, args, config, device, verbose=False, epoch=epoch)
         all_time_all_metrics[f"epoch_{epoch}"] = all_metrics
 
     metric_avg = metrics_avg[args.metric_for_scheduler]
@@ -672,7 +674,9 @@ def train_model(args: Union[argparse.Namespace, None], rank=None, world_size=Non
         if should_print:
             save_last_weights(args, model, device_ids, optimizer, epoch, all_time_all_metrics, all_losses, best_metric, scheduler)
         if ddp:
-            metrics_avg, all_metrics = valid_multi_gpu(model, args, config, args.device_ids, verbose=False)
+            metrics_avg, all_metrics = valid_multi_gpu(
+                model, args, config, args.device_ids, verbose=False, epoch=epoch
+            )
             if rank == 0:
                 all_time_all_metrics[f"epoch_{epoch}"] = all_metrics
                 best_metric = compute_epoch_metrics(

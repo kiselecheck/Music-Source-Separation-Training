@@ -105,8 +105,11 @@ class ValidationConfig:
     model_type: str = "mdx23c"
     device_ids: DeviceIds = 0
     force_cpu: bool = False
+    compile: bool = False
     metrics: ValidationMetric | Sequence[ValidationMetric] = ("sdr",)
     output_folder: PathValue | None = None
+    validation_manifest: PathValue | None = None
+    track_csv_path: PathValue | None = None
     extension: str = "wav"
     use_tta: bool = False
     draw_spectro: float = 0
@@ -124,6 +127,10 @@ class ValidationConfig:
         _metrics(self.metrics)
         if not self.extension.lstrip(".").strip():
             raise ValueError("extension cannot be empty")
+        if self.validation_manifest is not None and not str(self.validation_manifest).strip():
+            raise ValueError("validation_manifest cannot be empty")
+        if self.track_csv_path is not None and not str(self.track_csv_path).strip():
+            raise ValueError("track_csv_path cannot be empty")
         if self.draw_spectro < 0:
             raise ValueError("draw_spectro cannot be negative")
 
@@ -137,9 +144,16 @@ class ValidationConfig:
             "model_type": self.model_type,
             "device_ids": _device_ids(self.device_ids),
             "force_cpu": self.force_cpu,
+            "compile": self.compile,
             "metrics": _metrics(self.metrics),
             "store_dir": (
                 "" if self.output_folder is None else str(self.output_folder)
+            ),
+            "validation_manifest": (
+                "" if self.validation_manifest is None else str(self.validation_manifest)
+            ),
+            "track_csv_path": (
+                "" if self.track_csv_path is None else str(self.track_csv_path)
             ),
             "extension": self.extension.lstrip(".").lower(),
             "use_tta": self.use_tta,
@@ -210,8 +224,11 @@ def valid(
     model_type: str = "mdx23c",
     device_ids: DeviceIds = 0,
     force_cpu: bool = False,
+    compile: bool = False,
     metrics: ValidationMetric | Sequence[ValidationMetric] = ("sdr",),
     output_folder: PathValue | None = None,
+    validation_manifest: PathValue | None = None,
+    track_csv_path: PathValue | None = None,
     extension: str = "wav",
     use_tta: bool = False,
     draw_spectro: float = 0,
@@ -233,6 +250,8 @@ def valid(
         force_cpu: Run on CPU even when CUDA is available.
         metrics: Metric name or names to calculate.
         output_folder: Optional directory for separated stems and result logs.
+        validation_manifest: CSV with keyed validation mixture paths.
+        track_csv_path: Optional CSV path for per-track metric rows.
         extension: Validation audio extension, without or with a leading dot.
         use_tta: Apply validation-time channel/polarity augmentation.
         draw_spectro: Number of seconds to include in saved spectrograms;
@@ -259,8 +278,11 @@ def valid(
         model_type=model_type,
         device_ids=device_ids,
         force_cpu=force_cpu,
+        compile=compile,
         metrics=metrics,
         output_folder=output_folder,
+        validation_manifest=validation_manifest,
+        track_csv_path=track_csv_path,
         extension=extension,
         use_tta=use_tta,
         draw_spectro=draw_spectro,
@@ -275,9 +297,14 @@ def valid(
         "checkpoint_path": str(checkpoint_path),
         "valid_path": [str(path) for path in _paths(valid_path)],
         "output_folder": str(output_folder) if output_folder else None,
+        "validation_manifest": (
+            str(validation_manifest) if validation_manifest else None
+        ),
+        "track_csv_path": str(track_csv_path) if track_csv_path else None,
         "model_type": model_type,
         "device_ids": device_ids,
         "force_cpu": force_cpu,
+        "compile": compile,
         "metrics": metrics,
     }
     with tracked_run(
