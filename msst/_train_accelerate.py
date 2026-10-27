@@ -91,6 +91,8 @@ def train_model(args):
     accelerator = Accelerator()
     device = accelerator.device
     args = validate_train_args(parse_args_train(args))
+    if args.do_max_batch:
+        raise ValueError("--do_max_batch supports the standard single-GPU launcher only")
 
     manual_seed(args.seed + int(time.time()))
     # torch.backends.cudnn.benchmark = True

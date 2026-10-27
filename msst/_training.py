@@ -519,10 +519,10 @@ def train_model(args: Union[argparse.Namespace, None], rank=None, world_size=Non
     else:
         batch_size = config.training.batch_size * len(device_ids)
 
-    if not dist.is_initialized() or dist.get_rank() == 0:
-        wandb_init(args, config, batch_size)
-
-    train_loader = prepare_data(config, args, batch_size)
+    if not args.do_max_batch:
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            wandb_init(args, config, batch_size)
+        train_loader = prepare_data(config, args, batch_size)
 
     if args.start_check_point:
         checkpoint = torch.load(args.start_check_point, weights_only=False, map_location='cpu')
@@ -562,6 +562,20 @@ def train_model(args: Union[argparse.Namespace, None], rank=None, world_size=Non
         if not dist.is_initialized() or dist.get_rank() == 0:
             print(f"Initializing EMA with decay: {config.training.ema_momentum}")
         ema_model = AveragedModel(model_module, multi_avg_fn=get_ema_multi_avg_fn(config.training.ema_momentum))
+
+    if args.do_max_batch:
+        if ddp:
+            raise ValueError("--do_max_batch supports the standard single-GPU launcher only")
+        from msst.auto_batch import select_max_batch
+        resume_optimizer = (checkpoint.get("optimizer_state_dict")
+                            if args.start_check_point and args.load_optimizer else None)
+        select_max_batch(model, ema_model, config, args, device, device_ids,
+                         use_amp, resume_optimizer)
+        batch_size = config.training.batch_size
+
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            wandb_init(args, config, batch_size)
+        train_loader = prepare_data(config, args, batch_size)
 
     if args.pre_valid:
         model_to_valid = ema_model if ema_model is not None else model

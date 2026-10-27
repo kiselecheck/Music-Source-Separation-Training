@@ -24,7 +24,7 @@ dataset implementations.
 [Dataset layouts](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/dataset_types.md) ·
 [Pretrained models](https://github.com/ZFTurbo/Music-Source-Separation-Training/blob/main/docs/pretrained_models.md)
 
-[Custom model extensions](docs/custom_models.md)
+[Custom model extensions](docs/custom_models.md) · [Automatic GPU batch size](docs/python_api.md#automatic-gpu-batch-size)
 
 ## What is included
 

@@ -47,6 +47,8 @@ def train_model_single(rank: int, world_size: int, args=None):
 
 def train_model_ddp(args=None):
     parsed_args = validate_train_args(parse_args_train(args))
+    if parsed_args.do_max_batch:
+        raise ValueError("--do_max_batch supports the standard single-GPU launcher only")
     if not torch.cuda.is_available():
         raise RuntimeError("DDP training requires CUDA")
     available_devices = torch.cuda.device_count()

@@ -320,11 +320,46 @@ Accepted `**options` use the same names as the CLI:
 | Validation/saving | `pre_valid`, `metrics`, `metric_for_scheduler`, `each_metrics_in_name`, `save_weights_every_epoch`, `validation_manifest`, `validation_track_csv`, `track_csv_path` |
 | Weights/LoRA | `train_lora_peft`, `train_lora_loralib`, `lora_checkpoint_peft`, `lora_checkpoint_loralib`, `freeze_layers` |
 | Weights & Biases | `wandb_key`, `wandb_offline`, `wandb_project`, `wandb_group`, `wandb_run_name`, `wandb_tags`, `wandb_dir` |
-| Runtime | `set_per_process_memory_fraction` |
+| Runtime | `set_per_process_memory_fraction`, `do_max_batch`, `max_batch_limit`, `max_batch_memory_fraction`, `max_batch_probe_steps`, `max_batch_chunk_reduction` |
 
 Exact defaults, choices, and CLI descriptions are available from
 `msst train --help`; architecture, optimizer, schedule, batch size, segment
 length, and epoch settings remain in the YAML config. `train` returns `None`.
+
+### Automatic GPU batch size
+
+For the standard single-CUDA-GPU launcher, add `--do_max_batch` to the usual
+`msst train` command, or pass `do_max_batch=True` to `msst.train()`. Before
+training, MSST tries increasing physical batch sizes with real dataset batches,
+training loss, backward, optimizer and EMA updates, then validates the longest
+available track. It restores model and random state before training. The chosen
+settings and candidate results are saved to `results_path/auto_batch.json`;
+the original YAML file is unchanged. `gradient_accumulation_steps` is not
+adjusted, so the effective batch size and optimization behavior can change.
+
+By default, the estimated peak, including memory already used by other GPU
+processes and PyTorch's peak reserved memory, must be at most 90% of total
+VRAM. Use `--max_batch_memory_fraction 0.85` to reserve more space,
+`--max_batch_probe_steps 10` to sample more training steps, and
+`--max_batch_limit 32` to set the maximum batch to try. At least two optimizer
+updates are run, accounting for gradient accumulation. Reaching the batch
+limit is reported and does not establish the true maximum.
+
+The optional `--max_batch_chunk_reduction 0.08` allows reducing the original
+`audio.chunk_size` by up to 8% in approximately 1% increments, only for
+`bs_roformer` and `mel_band_roformer`. The search first prefers the original
+chunk for a given batch, and changes the chunk only to reach a larger batch.
+This changes the training context and may also affect validation when its
+chunk size comes from `audio.chunk_size`. Chunk-size augmentation cannot be
+combined with automatic reduction. Reduction defaults to zero; its upper bound
+is 10%. The equivalent Python options omit the leading `--`.
+
+A finite probe cannot guarantee that a later batch, a different active-stem
+selection, augmentation, longer external allocation, or another GPU process
+will not exceed the limit. Peak device memory is estimated, and reporting can
+vary with the GPU driver. The selected value is a conservative tested choice,
+not a guarantee. DDP, DataParallel and Accelerate are not supported by this
+option; they fail explicitly instead of silently ignoring it.
 
 The equivalent unified commands are:
 
