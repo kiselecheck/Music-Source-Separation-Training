@@ -323,15 +323,16 @@ def demix(
                     ):
                         x = x[:, target_index:target_index + 1]
 
-                    if mode == "generic":
-                        window = windowing_array.clone() # using clone() fixes the clicks at chunk edges when using batch_size=1
-                        if i - step == 0:  # First audio chunk, no fadein
-                            window[:fade_size] = 1
-                        elif i >= mix.shape[1]:  # Last audio chunk, no fadeout
-                            window[-fade_size:] = 1
-
                     for j, (start, seg_len) in enumerate(batch_locations):
                         if mode == "generic":
+                            # Edge treatment belongs to each chunk, not its batch.
+                            first = start == 0
+                            last = start + step >= mix.shape[1]
+                            window = windowing_array.clone() if fade_size and (first or last) else windowing_array
+                            if fade_size and first:
+                                window[:fade_size] = 1
+                            if fade_size and last:
+                                window[-fade_size:] = 1
                             result[..., start:start + seg_len] += x[j, ..., :seg_len] * window[..., :seg_len]
                             counter[start:start + seg_len] += window[:seg_len]
                         else:
