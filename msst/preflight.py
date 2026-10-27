@@ -83,7 +83,6 @@ def check(
     dataset_type: int = 1,
     mode: CheckMode = "safe",
     memory_headroom: float = 0.15,
-    sample_training_pairs: int = 0,
     **options: Any,
 ) -> CheckReport:
     """Check whether a training run is ready to start.
@@ -109,15 +108,12 @@ def check(
         dataset_type: MSST dataset layout, from 1 through 8.
         mode: Exactly ``"safe"`` or ``"full"``.
         memory_headroom: Required free fraction after a full GPU train-step.
-        sample_training_pairs: Number of real single-target examples to inspect on CPU.
         **options: Additional options accepted by ``msst train``.
 
     Returns:
         A report whose ``ok`` property is false when any check failed.
     """
 
-    if not isinstance(sample_training_pairs, int) or isinstance(sample_training_pairs, bool) or sample_training_pairs < 0:
-        raise ValueError("sample_training_pairs must be a non-negative integer")
     if mode not in ("safe", "full"):
         raise ValueError("mode must be 'safe' or 'full'")
     if not 0 <= memory_headroom < 1:
@@ -276,21 +272,6 @@ def check(
                     verbose=False,
                     reuse=False,
                 )
-                if sample_training_pairs:
-                    from .data_audit import inspect_training_pairs
-                    try:
-                        assert runtime_args is not None
-                        audit = inspect_training_pairs(config, runtime_args, metadata,
-                                                       str(Path(temporary) / "metadata.pkl"),
-                                                       sample_training_pairs)
-                        status = "error" if audit["nonfinite"] else (
-                            "warning" if audit["identity_like"] else "pass")
-                        record("training_pairs", status,
-                               f"Sampled {audit['samples']} pairs: {audit['identity_like']} "
-                               f"near-identical mixture/target, {audit['silent_targets']} silent targets, "
-                               f"{audit['nonfinite']} non-finite. Silent targets can be valid negatives.", audit)
-                    except Exception as error:
-                        record("training_pairs", "error", f"{type(error).__name__}: {error}")
             track_count = (
                 sum(len(value) for value in metadata.values())
                 if isinstance(metadata, dict)
