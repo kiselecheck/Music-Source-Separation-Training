@@ -7,6 +7,12 @@ import soundfile as sf
 from ml_collections import ConfigDict
 
 from msst._validation import _read_composed_mixture, get_mixture_paths
+from scripts.prepare_musdb_bass_hardneg_views import (
+    discover_tracks,
+    make_views,
+    normalized_track_name,
+    validate_views,
+)
 
 
 def _write_audio(path: Path, value: float, frames: int = 4096) -> None:
@@ -63,12 +69,6 @@ def test_validation_follows_directory_symlink_views(tmp_path: Path) -> None:
 
 
 def test_musdb_views_are_symlinks_and_keep_official_splits_disjoint(tmp_path: Path) -> None:
-    import pytest
-    views = pytest.importorskip("scripts.prepare_musdb_bass_hardneg_views")
-    discover_tracks = views.discover_tracks
-    make_views = views.make_views
-    normalized_track_name = views.normalized_track_name
-    validate_views = views.validate_views
     musdb_root = tmp_path / "musdb"
     train_root = musdb_root / "train"
     test_root = musdb_root / "test"
