@@ -272,6 +272,18 @@ report.raise_for_errors()
   model weights. `peak_allocated_gib` and `peak_reserved_gib` report the measured
   GPU peak, including optimizer-state allocation.
 
+For single-target datasets, add `sample_training_pairs=32` to `msst.check()`
+to inspect actual randomly sampled training pairs on CPU, including configured
+augmentations. The `training_pairs` item reports near-identical mixture/target
+pairs, silent targets, non-finite samples, and median residual-to-target RMS.
+A non-silent pair is marked near-identical when `RMS(mixture - target)` is at
+most 0.1% of `RMS(target)`. A warning suggests checking dataset construction;
+near-identity may be intentional. Silent targets are counted separately since
+negative examples may be valid. This is a sample, not an exhaustive dataset
+validation, and it does not prove that the residual is the correct instrument.
+The audit requires `training.target_instrument`, reads metadata and audio on
+CPU, and does not change the dataset or create the results directory.
+
 `CheckReport.ok` is false on errors; `errors` and `warnings` contain typed
 `CheckItem` values. A successful full step proves that representative batch
 fits. Random augmentations and future batches can still differ, so this is not

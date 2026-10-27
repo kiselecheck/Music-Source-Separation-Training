@@ -274,3 +274,11 @@ custom control flow, or a reusable loaded `Separator`.
 
 Both interfaces call the same packaged runtime. See [Python API](python_api.md)
 for object types, return values, and exception behavior.
+
+### Inspect training pairs
+
+For single-target training, add `--sample_training_pairs 32` to `msst check`
+to sample real CPU training examples and flag nearly identical inputs and
+targets. Silent targets are reported separately. See the
+[Python API preflight documentation](python_api.md#preflight-checks) for
+interpretation and limitations.

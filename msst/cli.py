@@ -172,6 +172,7 @@ def check() -> None:
 
     pre_parser = argparse.ArgumentParser(prog="msst check", add_help=False)
     pre_parser.add_argument("--mode", choices=["safe", "full"], default="safe")
+    pre_parser.add_argument("--sample_training_pairs", type=int, default=0, help="Inspect this many real single-target training examples on CPU")
     pre_parser.add_argument(
         "--memory_headroom",
         "--memory-headroom",
@@ -216,6 +217,7 @@ def check() -> None:
             dataset_type=dataset_type,
             mode=pre_args.mode,
             memory_headroom=pre_args.memory_headroom,
+            sample_training_pairs=pre_args.sample_training_pairs,
             **values,
         )
         for item in report.items:
