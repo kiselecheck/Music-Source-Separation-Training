@@ -544,11 +544,12 @@ def process_audio_files(
     for path in mixture_paths:
         start_time = time.time()
         if os.path.isdir(path):
+            folder = path
             mix, sr = _read_composed_mixture(path, config, extension)
         else:
+            folder = os.path.dirname(path)
             mix, sr = read_audio_transposed(path)
         mix_orig = mix.copy()
-        folder = os.path.dirname(path)
         real_instruments = get_instruments(folder)
         # resample input to config SR if needed
         if 'audio' in config and 'sample_rate' in config.audio:
