@@ -285,61 +285,16 @@ def check(
 
         if validation_roots:
             try:
-                import soundfile as sf
+                from .preflight_validation import inspect_validation_metadata
 
-                inference_config = getattr(config, "inference", {})
-                mixture_names: list[str] = []
-                configured_names = getattr(
-                    inference_config, "mixture_names", None
-                )
-                if configured_names:
-                    if isinstance(configured_names, (list, tuple)):
-                        mixture_names.extend(map(str, configured_names))
-                    else:
-                        mixture_names.append(str(configured_names))
-                input_name = getattr(inference_config, "input_name", None)
-                if input_name:
-                    mixture_names.insert(0, str(input_name))
-                if not mixture_names:
-                    mixture_names = ["mixture"]
-                mixture_files: list[Path] = []
-                for root in validation_roots:
-                    for mixture_name in dict.fromkeys(mixture_names):
-                        mixture_files.extend(root.rglob(f"{mixture_name}.wav"))
-                        mixture_files.extend(root.rglob(f"{mixture_name}.flac"))
-                mixture_files = list(dict.fromkeys(mixture_files))
-                if not mixture_files:
-                    raise ValueError(
-                        "No validation mixtures were found for names: "
-                        + ", ".join(dict.fromkeys(mixture_names))
-                    )
-                instruments = list(config.training.instruments)
-                other_fix = bool(getattr(config.training, "other_fix", False))
-                for audio_path in mixture_files:
-                    sf.info(audio_path)
-                    for instrument in instruments:
-                        reference_name = (
-                            "vocals"
-                            if instrument == "other" and other_fix
-                            else str(instrument)
-                        )
-                        reference_candidates = [
-                            audio_path.parent / f"{reference_name}.wav",
-                            audio_path.parent / f"{reference_name}.flac",
-                        ]
-                        reference = next(
-                            (path for path in reference_candidates if path.is_file()),
-                            None,
-                        )
-                        if reference is None:
-                            raise FileNotFoundError(
-                                f"Reference '{reference_name}' is missing next to {audio_path}"
-                            )
-                        sf.info(reference)
+                assert runtime_args is not None
+                summary = inspect_validation_metadata(runtime_args, config)
                 record(
                     "validation_dataset",
                     "pass",
-                    f"Decoded metadata for {len(mixture_files)} validation mixture(s)",
+                    f"Decoded metadata for {summary['tracks']} validation mixture(s); "
+                    f"{summary['target_absent']} without target",
+                    summary,
                 )
             except Exception as error:
                 record(

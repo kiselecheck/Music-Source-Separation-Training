@@ -241,6 +241,10 @@ pickle cache.
 
 ## Preflight checks
 
+Validation metadata checks respect configured mixture names, composed source
+tracks, and the validation manifest. When `single_target_from_mixture` is
+enabled, a missing target can be a negative example.
+
 There are intentionally exactly two modes:
 
 ```python
