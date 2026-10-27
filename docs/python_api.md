@@ -200,7 +200,7 @@ arguments before a run.
 
 The validation manifest requires `key` and `mixture_path` columns and may
 include `group`. A mixture path may identify an audio file or a track directory
-whose configured component stems are summed. Relative paths resolve from the
+containing exactly one input with a configured name. Relative paths resolve from the
 CSV file; they must belong to a `valid_path` root. The group is copied from the
 CSV and is not inferred from directory names. See
 [Validation CLI](cli.md#validation) for an example. The CSV report preserves
@@ -241,9 +241,10 @@ pickle cache.
 
 ## Preflight checks
 
-Validation metadata checks respect configured mixture names, composed source
-tracks, and the validation manifest. When `single_target_from_mixture` is
-enabled, a missing target can be a negative example.
+Validation metadata checks respect configured input names and the validation
+manifest. Every track must have an input audio file; validation never builds a
+mixture from stems. When `single_target_from_mixture` is enabled, a missing
+target can be a negative example.
 
 There are intentionally exactly two modes:
 

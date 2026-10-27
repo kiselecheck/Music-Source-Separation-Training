@@ -112,8 +112,10 @@ for the configured target. This option is supported by dataset types 5 and 6.
 Type 5 returns aligned precomputed chunks; type 6 samples aligned chunks from
 full tracks.
 
-For datasets without a stored mixture, set `training.mixture_source_instruments`
-to the names of the component stem files that should be summed. On dataset type
+For training datasets without a stored mixture, set `training.mixture_source_instruments`
+to the names of the component stem files that should be summed. Validation
+always requires a stored input file, such as `mixture.wav` or a configured
+`inference.input_name`; it does not construct mixtures from stems. On dataset type
 6, target-absent tracks can be retained as negative examples with
 `training.allow_missing_target: true`; their target is zero-filled while the
 mixture remains the input. Set it to `false` for target-positive-only training.

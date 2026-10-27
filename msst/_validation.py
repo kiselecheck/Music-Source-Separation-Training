@@ -86,6 +86,17 @@ def _validation_mixture_names(config: ConfigDict) -> List[str]:
     return deduped
 
 
+def _validation_input_candidates(folder, names, extensions):
+    """Yield configured input paths, accepting names with or without suffixes."""
+    candidates = []
+    for name in names:
+        if Path(name).suffix.lower().lstrip('.') in extensions:
+            candidates.append(Path(folder) / name)
+        else:
+            candidates.extend(Path(folder) / f"{name}.{ext}" for ext in extensions)
+    return list(dict.fromkeys(candidates))
+
+
 def write_validation_track_metrics_csv(
     results_path: str,
     epoch: Optional[int],
@@ -210,16 +221,6 @@ def _save_track_csv(args, epoch, per_track_metrics, manifest_tracks):
     print(f"Saved per-track validation metrics: {csv_path}")
 
 
-def _mixture_source_instruments(config: ConfigDict) -> List[str]:
-    training = getattr(config, "training", None)
-    if training is None and isinstance(config, dict):
-        training = config.get("training", None)
-    return [
-        str(name)
-        for name in _as_list(_cfg_get(training, "mixture_source_instruments", None))
-    ]
-
-
 def _validation_manifest_for_args(args) -> Optional[Dict[str, ValidationTrack]]:
     manifest_path = getattr(args, "validation_manifest", "")
     if not manifest_path:
@@ -276,45 +277,58 @@ def get_mixture_paths(
 
     mixture_names = _validation_mixture_names(config)
 
-    mixture_sources = _mixture_source_instruments(config)
-
     def find_mixture_files(root_dir):
         root_path = Path(root_dir)
+        if not root_path.is_dir():
+            raise FileNotFoundError(f"Validation directory not found: {root_path}")
         files = []
         extensions = _audio_file_extensions(extension)
         for folder, subfolders, filenames in os.walk(root_path, followlinks=True):
             filename_set = set(filenames)
-            has_explicit_mixture = False
-            for mixture_name in mixture_names:
-                for ext in extensions:
-                    candidate_name = f"{mixture_name}.{ext}"
-                    if candidate_name in filename_set:
-                        files.append(str(Path(folder) / candidate_name))
-                        has_explicit_mixture = True
-
-            has_composed_mixture = False
-            if not has_explicit_mixture and mixture_sources:
-                has_composed_mixture = all(
-                    any(f"{source}.{ext}" in filename_set for ext in extensions)
-                    for source in mixture_sources
-                )
-                if has_composed_mixture:
-                    files.append(str(Path(folder)))
-
-            if has_explicit_mixture or has_composed_mixture:
+            matches = [str(candidate) for candidate in
+                       _validation_input_candidates(folder, mixture_names, extensions)
+                       if candidate.name in filename_set and candidate.is_file()]
+            if matches:
+                files.extend(matches)
                 subfolders[:] = []
+                continue
+            # Audio-containing folders and leaf folders represent tracks.
+            contains_audio = any(Path(name).suffix.lower().lstrip('.') in extensions
+                                 for name in filenames)
+            if contains_audio or not subfolders:
+                raise FileNotFoundError(
+                    f"No validation input file in track folder {folder}; "
+                    f"expected one of {mixture_names} with extensions {extensions}"
+                )
         return sorted(dict.fromkeys(files))
 
     if manifest_tracks is None:
         manifest_tracks = _validation_manifest_for_args(args)
     if manifest_tracks is not None:
+        # Resolve directory entries to explicitly configured input names and
+        # preserve their keys for per-track CSV output.
+        resolved = {}
+        for path, info in manifest_tracks.items():
+            if os.path.isdir(path):
+                matches = [str(candidate) for candidate in _validation_input_candidates(
+                    path, mixture_names, _audio_file_extensions(extension)) if candidate.is_file()]
+                if not matches:
+                    raise FileNotFoundError(
+                        f"No validation input file in track folder {path}; "
+                        f"expected one of {mixture_names}"
+                    )
+                if len(matches) != 1:
+                    raise ValueError(f"Multiple configured validation inputs in {path}; select a file in the manifest")
+                path = matches[0]
+            if path in resolved:
+                raise ValueError(f"Validation manifest selects the same input more than once: {path}")
+            resolved[path] = info
+        manifest_tracks.clear()
+        manifest_tracks.update(resolved)
         all_mixtures_path = list(manifest_tracks)
     else:
         for root in valid_paths:
-            part = find_mixture_files(root)
-            if not part and verbose and should_print:
-                print(f"No validation data found in: {root}")
-            all_mixtures_path.extend(part)
+            all_mixtures_path.extend(find_mixture_files(root))
 
     # --- verbose summary ---
     if verbose and should_print:
@@ -407,42 +421,6 @@ def update_metrics_and_pbar(
             mixture_paths.set_postfix(pbar_dict)
         except Exception:
             pass
-
-
-def _read_composed_mixture(
-    path: str, config: ConfigDict, preferred_extension: Optional[str] = None
-) -> Tuple[np.ndarray, int]:
-    folder = path
-    source_names = _mixture_source_instruments(config)
-    source_waveforms = []
-    source_rates = []
-    for source_name in source_names:
-        source_path = next(
-            (
-                os.path.join(folder, f"{source_name}.{ext}")
-                for ext in _audio_file_extensions(preferred_extension)
-                if os.path.isfile(os.path.join(folder, f"{source_name}.{ext}"))
-            ),
-            None,
-        )
-        if source_path is None:
-            raise FileNotFoundError(
-                f"Missing mixture component '{source_name}' in {folder}"
-            )
-        source_audio, source_sr = read_audio_transposed(source_path)
-        source_waveforms.append(source_audio)
-        source_rates.append(source_sr)
-
-    if not source_waveforms:
-        raise ValueError("No mixture source instruments configured for composed mixture")
-    if len(set(source_rates)) != 1:
-        raise ValueError(f"Mixture source sample rates differ in {folder}: {source_rates}")
-    common_length = min(waveform.shape[-1] for waveform in source_waveforms)
-    mixture = np.sum(
-        np.stack([waveform[..., :common_length] for waveform in source_waveforms]),
-        axis=0,
-    )
-    return mixture, source_rates[0]
 
 
 def process_audio_files(
@@ -544,11 +522,9 @@ def process_audio_files(
     for path in mixture_paths:
         start_time = time.time()
         if os.path.isdir(path):
-            folder = path
-            mix, sr = _read_composed_mixture(path, config, extension)
-        else:
-            folder = os.path.dirname(path)
-            mix, sr = read_audio_transposed(path)
+            raise ValueError(f"Expected a validation input file, got track folder: {path}")
+        folder = os.path.dirname(path)
+        mix, sr = read_audio_transposed(path)
         mix_orig = mix.copy()
         real_instruments = get_instruments(folder)
         # resample input to config SR if needed

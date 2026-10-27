@@ -20,13 +20,11 @@ def config():
         'inference': {'batch_size': 1, 'num_overlap': 2}})
 
 
-def test_composed_negative_and_target_tracks(tmp_path):
+def test_validation_metadata_rejects_missing_input(tmp_path):
     for name in ['bass', 'drums']:
         audio(tmp_path / 'negative' / f'{name}.wav')
-        audio(tmp_path / 'positive' / f'{name}.wav')
-    audio(tmp_path / 'positive' / 'synth_bass.wav')
-    result = inspect_validation_metadata(Namespace(valid_path=[str(tmp_path)]), config())
-    assert result == {'tracks': 2, 'target_absent': 1}
+    with pytest.raises(FileNotFoundError, match='negative'):
+        inspect_validation_metadata(Namespace(valid_path=[str(tmp_path)]), config())
 
 
 def test_explicit_target_and_manifest_exclude_other_incomplete_tracks(tmp_path):
@@ -45,10 +43,3 @@ def test_missing_required_target_is_error_without_negative_mode(tmp_path):
     cfg.training.single_target_from_mixture = False
     with pytest.raises(FileNotFoundError, match='synth_bass'):
         inspect_validation_metadata(Namespace(valid_path=[str(tmp_path)]), cfg)
-
-
-def test_composed_mixture_with_mismatched_sample_rates_fails(tmp_path):
-    audio(tmp_path / 'track' / 'bass.wav', rate=8000)
-    audio(tmp_path / 'track' / 'drums.wav', rate=16000)
-    with pytest.raises(ValueError, match='sample rates'):
-        inspect_validation_metadata(Namespace(valid_path=[str(tmp_path)]), config())

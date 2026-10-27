@@ -6,7 +6,6 @@ __author__ = 'Roman Solovyev (ZFTurbo): https://github.com/ZFTurbo/'
 import soundfile as sf
 import numpy as np
 import time
-import glob
 from tqdm.auto import tqdm
 import os
 import torch
@@ -70,15 +69,11 @@ def valid(model, valid_loader, args, config, device, verbose=False):
 
 
 class MSSValidationDataset(torch.utils.data.Dataset):
-    def __init__(self, args):
-        all_mixtures_path = []
-        for valid_path in args.valid_path:
-            part = sorted(glob.glob(valid_path + '/*/mixture.wav'))
-            if len(part) == 0:
-                print('No validation data found in: {}'.format(valid_path))
-            all_mixtures_path += part
+    def __init__(self, args, config):
+        from msst._validation import get_mixture_paths
 
-        self.list_of_files = all_mixtures_path
+        extension = getattr(config.inference, 'extension', 'wav')
+        self.list_of_files = get_mixture_paths(args, False, config, extension)
 
     def __len__(self):
         return len(self.list_of_files)
@@ -167,7 +162,7 @@ def train_model(args):
         collate_fn=_training_collate_fn(config, args.dataset_type),
     )
 
-    validset = MSSValidationDataset(args)
+    validset = MSSValidationDataset(args, config)
     valid_dataset_length = len(validset)
 
     valid_loader = DataLoader(

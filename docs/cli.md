@@ -94,8 +94,9 @@ Supported metric names are listed by the command help and exposed in Python as
 To evaluate a fixed list of full tracks, pass `--validation_manifest tracks.csv`.
 The CSV has `key` and `mixture_path` columns; `group` is optional and is copied
 as provided rather than inferred from directory names. `mixture_path` may point
-to an audio file, or to a track directory when the config lists its component
-stems in `training.mixture_source_instruments`:
+to an input audio file, or to a track directory containing exactly one input
+matching `inference.input_name` or `inference.mixture_names` (default `mixture`).
+Validation requires a stored input and never constructs one from stems:
 
 ```csv
 key,mixture_path,group

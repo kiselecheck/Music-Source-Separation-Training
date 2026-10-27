@@ -6,13 +6,15 @@ import numpy as np
 import soundfile as sf
 from ml_collections import ConfigDict
 
-from msst._validation import _read_composed_mixture, get_mixture_paths
+from msst._validation import get_mixture_paths
+import pytest
 from scripts.prepare_musdb_bass_hardneg_views import (
     discover_tracks,
     make_views,
     normalized_track_name,
     validate_views,
 )
+
 
 
 def _write_audio(path: Path, value: float, frames: int = 4096) -> None:
@@ -39,16 +41,11 @@ def _config() -> ConfigDict:
     )
 
 
-def test_validation_composes_a_mixture_for_component_only_tracks(tmp_path: Path) -> None:
+def test_validation_requires_input_for_component_only_track(tmp_path: Path) -> None:
     track = tmp_path / "ordinary_bass_track"
     _write_musdb_track(track)
-    paths = get_mixture_paths(Namespace(valid_path=[str(tmp_path)]), False, _config(), "wav")
-
-    assert paths == [str(track)]
-    mixture, sample_rate = _read_composed_mixture(paths[0], _config())
-    assert sample_rate == 44100
-    assert mixture.shape == (2, 4096)
-    np.testing.assert_allclose(mixture, 1.0, atol=1e-6)
+    with pytest.raises(FileNotFoundError, match="ordinary_bass_track"):
+        get_mixture_paths(Namespace(valid_path=[str(tmp_path)]), False, _config(), "wav")
 
 
 def test_validation_follows_directory_symlink_views(tmp_path: Path) -> None:
@@ -64,8 +61,9 @@ def test_validation_follows_directory_symlink_views(tmp_path: Path) -> None:
 
         pytest.skip(f"Directory symlinks are unavailable: {exc}")
 
+    _write_audio(source_track / "mixture.wav", 1.0)
     paths = get_mixture_paths(Namespace(valid_path=[str(view_root)]), False, _config(), "wav")
-    assert paths == [str(view)]
+    assert paths == [str(view / "mixture.wav")]
 
 
 def test_musdb_views_are_symlinks_and_keep_official_splits_disjoint(tmp_path: Path) -> None:
