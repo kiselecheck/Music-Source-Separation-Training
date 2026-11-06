@@ -18,7 +18,8 @@ def test_chunk_candidates_include_exact_bound():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
-def test_real_gpu_probe_restores_model_ema_rng_and_runs_validation(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize('optimizer_name,use_amp', [('adam', False), ('adamw', True), ('adam', True)])
+def test_real_gpu_probe_restores_model_ema_rng_and_runs_validation(tmp_path: Path, monkeypatch, optimizer_name, use_amp):
     from torch.optim.swa_utils import AveragedModel
     track = tmp_path / 'data' / 'song'
     track.mkdir(parents=True)
@@ -30,7 +31,7 @@ def test_real_gpu_probe_restores_model_ema_rng_and_runs_validation(tmp_path: Pat
     config = ConfigDict({
         'audio': {'num_channels': 2, 'chunk_size': 256, 'sample_rate': 8000, 'min_mean_abs': 0},
         'training': {'instruments': ['vocals', 'other'], 'target_instrument': None,
-                     'grad_clip': 0, 'batch_size': 1, 'num_steps': 2, 'optimizer': 'adam',
+                     'grad_clip': 0, 'batch_size': 1, 'num_steps': 2, 'optimizer': optimizer_name,
                      'lr': 0.001, 'other_fix': False, 'read_metadata_procs': 1,
                      'gradient_accumulation_steps': 2},
         'inference': {'batch_size': 1, 'num_overlap': 2, 'normalize': False},
@@ -47,7 +48,7 @@ def test_real_gpu_probe_restores_model_ema_rng_and_runs_validation(tmp_path: Pat
     torch_rng = torch.get_rng_state().clone()
     cuda_rng = torch.cuda.get_rng_state().clone()
     python_rng = random.getstate()
-    select_max_batch(model, ema, config, args, torch.device('cuda:0'), [0], False)
+    select_max_batch(model, ema, config, args, torch.device('cuda:0'), [0], use_amp)
     assert config.training.batch_size == 2
     assert config.audio.chunk_size == 256
     assert all(torch.equal(v, model.state_dict()[k]) for k, v in state.items())
@@ -63,7 +64,7 @@ def test_real_gpu_probe_restores_model_ema_rng_and_runs_validation(tmp_path: Pat
             raise torch.cuda.OutOfMemoryError('simulated validation OOM')
         return validate(*args, **kwargs)
     monkeypatch.setattr(validation, 'process_audio_files', reject_larger_batch)
-    select_max_batch(model, ema, config, args, torch.device('cuda:0'), [0], False)
+    select_max_batch(model, ema, config, args, torch.device('cuda:0'), [0], use_amp)
     assert config.training.batch_size == 1
     assert all(torch.equal(v, model.state_dict()[k]) for k, v in state.items())
     assert all(torch.equal(v, ema.state_dict()[k]) for k, v in ema_state.items())
@@ -71,7 +72,7 @@ def test_real_gpu_probe_restores_model_ema_rng_and_runs_validation(tmp_path: Pat
         raise RuntimeError('validation failure')
     monkeypatch.setattr(validation, 'process_audio_files', always_fail)
     with pytest.raises(RuntimeError, match='validation failure'):
-        select_max_batch(model, ema, config, args, torch.device('cuda:0'), [0], False)
+        select_max_batch(model, ema, config, args, torch.device('cuda:0'), [0], use_amp)
     assert config.training.batch_size == 1 and config.audio.chunk_size == 256
     assert all(torch.equal(v, model.state_dict()[k]) for k, v in state.items())
 
@@ -114,7 +115,8 @@ def test_training_entrypoint_runs_probe_then_epoch(tmp_path, monkeypatch):
     assert list((tmp_path / 'result').glob('*.ckpt'))
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
-def test_roformer_probe_can_trade_a_small_chunk_reduction_for_a_batch(tmp_path, monkeypatch):
+@pytest.mark.parametrize('model_type', ['bs_roformer', 'mel_band_roformer'])
+def test_roformer_probe_can_trade_a_small_chunk_reduction_for_a_batch(tmp_path, monkeypatch, model_type):
     pytest.importorskip('beartype')
     pytest.importorskip('rotary_embedding_torch')
     from msst.utils.settings import build_model_from_config
@@ -141,11 +143,15 @@ def test_roformer_probe_can_trade_a_small_chunk_reduction_for_a_batch(tmp_path, 
         'inference': {'batch_size': 1, 'num_overlap': 2, 'normalize': False},
         'augmentations': {'enable': False},
     })
-    args = parse_args_train({'model_type': 'bs_roformer', 'data_path': [str(tmp_path / 'data')],
+    args = parse_args_train({'model_type': model_type, 'data_path': [str(tmp_path / 'data')],
                              'valid_path': [str(tmp_path / 'data')], 'results_path': str(tmp_path),
                              'dataset_type': 6, 'max_batch_limit': 2, 'max_batch_probe_steps': 2,
                              'max_batch_memory_fraction': 0.99, 'max_batch_chunk_reduction': 0.02})
-    model = build_model_from_config('bs_roformer', config).cuda()
+    if model_type == 'mel_band_roformer':
+        del config.model.freqs_per_bands
+        config.model.num_bands = 4
+        config.model.sample_rate = 8000
+    model = build_model_from_config(model_type, config).cuda()
     real_validate = validation.process_audio_files
     def oom_for_large_full_chunk(*args, **kwargs):
         if config.training.batch_size == 2 and config.audio.chunk_size == 512:
@@ -154,4 +160,4 @@ def test_roformer_probe_can_trade_a_small_chunk_reduction_for_a_batch(tmp_path, 
     monkeypatch.setattr(validation, 'process_audio_files', oom_for_large_full_chunk)
     select_max_batch(model, None, config, args, torch.device('cuda:0'), [0], False)
     assert config.training.batch_size == 2
-    assert config.audio.chunk_size == 507
+    assert config.audio.chunk_size == (504 if model_type == 'mel_band_roformer' else 507)

@@ -160,7 +160,14 @@ def select_max_batch(model, ema_model, config, args, device, device_ids,
             torch.cuda.empty_cache()
 
     try:
-        for chunk in [original_chunk] + _chunk_candidates(original_chunk, args.max_batch_chunk_reduction):
+        chunks = _chunk_candidates(original_chunk, args.max_batch_chunk_reduction)
+        if args.model_type == 'mel_band_roformer' and not getattr(config.model, 'match_input_audio_length', False):
+            # Without an explicit ISTFT length, output is rounded to the STFT hop.
+            # Round candidates up so the requested reduction bound is respected.
+            hop = int(getattr(config.model, 'stft_hop_length', 512))
+            chunks = list(dict.fromkeys(math.ceil(chunk / hop) * hop for chunk in chunks))
+            chunks = [chunk for chunk in chunks if chunk < original_chunk]
+        for chunk in [original_chunk] + chunks:
             candidate = 1 if selected is None else selected[0] + 1
             while candidate <= args.max_batch_limit:
                 if not attempt(candidate, chunk):
@@ -181,7 +188,7 @@ def select_max_batch(model, ema_model, config, args, device, device_ids,
     report = {'batch_size': selected[0], 'chunk_size': selected[1],
               'original_chunk_size': original_chunk,
               'memory_fraction_limit': args.max_batch_memory_fraction,
-              'validation_path': validation_path, 'attempts': attempts}
+              'validation_path': os.fspath(validation_path), 'attempts': attempts}
     with open(os.path.join(args.results_path, 'auto_batch.json'), 'w', encoding='utf-8') as file:
         json.dump(report, file, indent=2)
     print(f'Auto batch selected: batch={selected[0]}, chunk={selected[1]} samples '

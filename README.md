@@ -414,3 +414,7 @@ If MSST contributes to published work, cite:
 ```
 
 MSST is brought to you by [MVSep](https://mvsep.com).
+
+## Automatic batch calibration
+
+Use `--do_max_batch` for opt-in single-GPU calibration before training. See [usage, limits and Slurm checks](docs/auto_batch.md).
