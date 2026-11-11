@@ -41,7 +41,7 @@ def select_max_batch(model, ema_model, config, args, device, device_ids,
     from msst._validation import get_mixture_paths, process_audio_files
     from msst.utils.dataset import prepare_data
     from msst.utils.losses import choice_loss
-    from msst.utils.model_utils import get_optimizer
+    from msst.utils.model_utils import get_optimizer, prefer_target_instrument
 
     if device.type != 'cuda' or len(device_ids) != 1:
         raise ValueError('--do_max_batch requires exactly one CUDA device')
@@ -108,32 +108,75 @@ def select_max_batch(model, ema_model, config, args, device, device_ids,
         probe_args.num_workers = 0
         probe_args.persistent_workers = False
         probe_args.prefetch_factor = None
-        loader = prepare_data(config, probe_args, batch)
+        probe_config = copy.deepcopy(config)
+        probe_augment = getattr(probe_config, 'augmentations', {})
+        if (getattr(probe_augment, 'enable', False)
+                and getattr(probe_augment, 'chunk_size_augm', False)
+                and 'chunk_size_min' in probe_augment and 'chunk_size_max' in probe_augment):
+            max_chunk = min(chunk, int(probe_augment.chunk_size_max))
+            if int(probe_augment.chunk_size_min) < 1 or int(probe_augment.chunk_size_min) > max_chunk:
+                raise ValueError('Invalid chunk_size_augm range for the available chunk length')
+            probe_augment.chunk_size_min = max_chunk
+            probe_augment.chunk_size_max = max_chunk
+        loader = prepare_data(probe_config, probe_args, batch)
         iterator = iter(loader)
         steps = max(args.max_batch_probe_steps, accumulation * 2)
+        max_steps = steps + 16 * accumulation
+        processed = 0
+        successful_updates = 0
         model.train()
-        for i in range(steps):
-            try:
-                data = next(iterator)
-            except StopIteration:
-                iterator = iter(loader)
-                data = next(iterator)
-            loss, _ = compute_training_loss(model, config, args, data, device, device_ids, loss_fn, use_amp)
-            scaler.scale(loss / accumulation).backward()
-            if (i + 1) % accumulation == 0 or i == steps - 1:
-                scaler.unscale_(optimizer)
-                if config.training.grad_clip:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.grad_clip)
-                scaler.step(optimizer)
-                scaler.update()
+        while (processed < steps or successful_updates < 2) and processed < max_steps:
+            window = min(accumulation, steps - processed) if processed < steps else accumulation
+            for _ in range(window):
+                try:
+                    data = next(iterator)
+                except StopIteration:
+                    iterator = iter(loader)
+                    data = next(iterator)
+                loss, _ = compute_training_loss(model, config, args, data, device, device_ids, loss_fn, use_amp)
+                if not torch.isfinite(loss).all():
+                    raise RuntimeError('Auto batch probe encountered non-finite training loss')
+                scaler.scale(loss / accumulation).backward()
+                processed += 1
+                del data, loss
+            scaler.unscale_(optimizer)
+            if not scaler.is_enabled() and any(
+                not torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None
+            ):
+                raise RuntimeError('Auto batch probe encountered non-finite gradients')
+            if config.training.grad_clip:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.grad_clip)
+            old_scale = scaler.get_scale()
+            scaler.step(optimizer)
+            scaler.update()
+            step_succeeded = scaler.get_scale() >= old_scale
+            if step_succeeded:
+                successful_updates += 1
                 if ema_model is not None:
                     ema_model.update_parameters(model)
-                optimizer.zero_grad(set_to_none=True)
-            del data, loss
+            optimizer.zero_grad(set_to_none=True)
+        if successful_updates < 2:
+            raise RuntimeError('Auto batch probe could not complete two optimizer updates due to AMP overflow')
         validation_model = ema_model if ema_model is not None else model
         validation_model.eval()
+        required = {(metric, instr) for metric in args.metrics
+                    for instr in prefer_target_instrument(config)}
+        coverage = set()
+        validation_paths = [validation_path] + [path for path in paths if path != validation_path]
         with torch.no_grad():
-            process_audio_files([validation_path], validation_model, args, config, device, is_tqdm=False)
+            for path in validation_paths:
+                metrics = process_audio_files([path], validation_model, args, config, device, is_tqdm=False)
+                for metric, per_instrument in metrics.items():
+                    for instr, measurements in per_instrument.items():
+                        if not all(math.isfinite(float(value)) for value in measurements):
+                            raise RuntimeError('Auto batch validation produced no finite metrics')
+                        if measurements:
+                            coverage.add((metric, instr))
+                if required.issubset(coverage):
+                    break
+        if not required.issubset(coverage):
+            missing = ', '.join(f'{metric}/{instr}' for metric, instr in sorted(required - coverage))
+            raise RuntimeError(f'Auto batch validation produced no finite metrics for: {missing}')
         torch.cuda.synchronize(device)
         free, _ = torch.cuda.mem_get_info(device)
         external = max(external, total - free - torch.cuda.memory_reserved(device))
