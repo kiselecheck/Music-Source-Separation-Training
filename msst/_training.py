@@ -563,6 +563,13 @@ def train_model(args: Union[argparse.Namespace, None], rank=None, world_size=Non
             print(f"Initializing EMA with decay: {config.training.ema_momentum}")
         ema_model = AveragedModel(model_module, multi_avg_fn=get_ema_multi_avg_fn(config.training.ema_momentum))
 
+    if args.compile:
+        if not ddp and len(device_ids) > 1:
+            print('DataParallel training does not support --compile. Use DDP to compile on multiple GPUs.')
+        else:
+            from msst.utils.model_utils import compile_model
+            compile_model(model_module, inplace=True)
+
     if args.do_max_batch:
         if ddp:
             raise ValueError("--do_max_batch supports the standard single-GPU launcher only")

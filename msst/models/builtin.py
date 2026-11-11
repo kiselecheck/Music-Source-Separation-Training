@@ -107,6 +107,35 @@ BUILTIN_MODEL_FACTORIES: dict[str, BuiltinModelFactory] = {
         ),
         uses_internal_loss=True,
     ),
+    "sub_roformer": BuiltinModelFactory(
+        _from_section("msst.models.sub_roformer", "SBRoformer"),
+        uses_internal_loss=True,
+    ),
+    "dbs_bsrnn": BuiltinModelFactory(
+        _from_section("msst.models.dynamic_band_splitting", "DBSBSRNN"),
+        uses_internal_loss=True,
+    ),
+    "dbs_bs_roformer": BuiltinModelFactory(
+        _from_section("msst.models.dynamic_band_splitting", "DBSBSRoformer"),
+        uses_internal_loss=True,
+    ),
+    "dbs_mel_roformer": BuiltinModelFactory(
+        _from_section("msst.models.dynamic_band_splitting", "DBSMelRoformer"),
+        uses_internal_loss=True,
+    ),
+    "scnet_roformer": BuiltinModelFactory(
+        _from_section("msst.models.scnet_roformer", "SCNetRoformer"),
+        uses_internal_loss=True,
+    ),
+    "bs_roformer_official": BuiltinModelFactory(
+        _from_section("msst.models.BSRoFormer_official", "BSRoFormer"),
+    ),
+    "mel_roformer_official": BuiltinModelFactory(
+        _from_section("msst.models.BSRoFormer_official", "MelRoFormer"),
+    ),
+    "vit_mel_roformer": BuiltinModelFactory(
+        _from_section("msst.models.VitMelRoFormer", "VitMelRoformer"),
+    ),
     "bs_roformer": BuiltinModelFactory(
         _from_section("msst.models.bs_roformer", "BSRoformer"),
         uses_internal_loss=True,

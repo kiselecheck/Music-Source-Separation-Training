@@ -131,6 +131,7 @@ def parse_args_train(dict_args: Union[argparse.Namespace, Dict, None]) -> argpar
     parser.add_argument("--wandb_tags", nargs='*', default=[], help='Optional W&B tags')
     parser.add_argument("--wandb_dir", type=str, default='', help='Directory for local W&B files')
     parser.add_argument("--pre_valid", action='store_true', help='Run validation before training')
+    parser.add_argument("--compile", action="store_true", help="Compile the training model in place")
     parser.add_argument("--do_max_batch", action='store_true', help="Probe batch size before standard single-GPU training")
     parser.add_argument("--max_batch_limit", type=int, default=64, help="Maximum batch size to try")
     parser.add_argument("--max_batch_memory_fraction", type=float, default=0.90, help="Maximum estimated peak fraction of GPU memory")
@@ -665,7 +666,7 @@ def initialize_environment_ddp(
     """
     seed = (seed + int(time.time())) % 55535 + 10000
     setup_ddp(rank, world_size, seed, device_id=device_id)
-    manual_seed(seed)
+    manual_seed(seed + rank * 100003)
 
     try:
         torch.multiprocessing.set_start_method('spawn', force=True)  # force=True prevent errors
