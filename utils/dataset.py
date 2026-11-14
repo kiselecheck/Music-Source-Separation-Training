@@ -537,19 +537,29 @@ class MSSDataset(torch.utils.data.Dataset):
     def _initialize_chunks_metadata(self):
         should_print = (not dist.is_initialized() or dist.get_rank() == 0)
         chunks_cache_path = self.metadata_path.replace('.pkl', '_chunks.pkl')
+        target_count = None
+        if self.dataset_type in (4, 6):
+            target_count = self.config.training.get(
+                'num_precompute_chunks',
+                self.config.training.num_steps * self.batch_size * self.config.training.num_epochs
+            )
         current_config = {
+            'dataset_type': self.dataset_type,
             'chunk_size': self.chunk_size,
             'min_mean_abs': self.min_mean_abs,
-            'instruments': sorted(self.instruments)
+            'instruments': sorted(self.instruments),
+            'target_count': target_count,
         }
         if os.path.exists(chunks_cache_path):
             try:
                 cached_chunks = pickle.load(open(chunks_cache_path, 'rb'))
                 cached_config = cached_chunks.get('config', {})
                 config_matches = (
+                        cached_config.get('dataset_type') == current_config['dataset_type'] and
                         cached_config.get('chunk_size') == current_config['chunk_size'] and
                         cached_config.get('min_mean_abs') == current_config['min_mean_abs'] and
-                        cached_config.get('instruments') == current_config['instruments']
+                        cached_config.get('instruments') == current_config['instruments'] and
+                        cached_config.get('target_count') == current_config['target_count']
                 )
                 if config_matches:
                     self.chunks_metadata = cached_chunks['chunks_metadata']
